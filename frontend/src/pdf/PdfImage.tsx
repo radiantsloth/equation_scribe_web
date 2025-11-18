@@ -1,30 +1,45 @@
+// frontend/src/pdf/PdfImage.tsx
 import React, { useEffect, useState } from "react";
 import { pageImageURL, pageMeta } from "../api/client";
 
 type Props = {
   paperId: string;
-  pdfPath: string;
   pageIndex: number;
   zoom: number;
   onImageReady: (img: HTMLImageElement, meta: any) => void;
 };
 
-export default function PdfImage({ paperId, pdfPath, pageIndex, zoom, onImageReady }: Props) {
+export default function PdfImage({ paperId, pageIndex, zoom, onImageReady }: Props) {
   const [src, setSrc] = useState<string>("");
 
   useEffect(() => {
     let cancelled = false;
+
     async function run() {
-      const meta = await pageMeta(paperId, pageIndex, pdfPath, zoom);
-      const url = pageImageURL(paperId, pageIndex, pdfPath, zoom);
+      // Request page metadata for the given paper/page/zoom
+      const meta = await pageMeta(paperId, pageIndex, zoom);
+
+      // Build image URL for the given paper/page/zoom
+      const url = pageImageURL(paperId, pageIndex, zoom);
+
       const img = new Image();
-      img.onload = () => { if (!cancelled) onImageReady(img, meta); };
+      img.onload = () => {
+        if (!cancelled) onImageReady(img, meta);
+      };
+      img.onerror = (e) => {
+        console.error("Failed to load PDF page image:", e);
+      };
       img.src = url;
       setSrc(url);
     }
-    run().catch(console.error);
-    return () => { cancelled = true; };
-  }, [paperId, pdfPath, pageIndex, zoom]);
 
-  return <img src={src} alt="pdf" style={{ display: "none" }} />;
+    run().catch(console.error);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [paperId, pageIndex, zoom, onImageReady]);
+
+  // We don't show the <img> directly; the Konva layer uses the HTMLImageElement
+  return <img src={src} alt="pdf-page" style={{ display: "none" }} />;
 }
