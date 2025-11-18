@@ -1,28 +1,35 @@
 from pathlib import Path
 from typing import List, Dict, Any
 import json
+
 from .schemas import EquationRecord
+
 
 def equations_path(root: Path, paper_id: str) -> Path:
     d = root / paper_id
     d.mkdir(parents=True, exist_ok=True)
     return d / "equations.jsonl"
 
+
 def read_equations(root: Path, paper_id: str) -> List[Dict[str, Any]]:
     p = equations_path(root, paper_id)
     if not p.exists():
         return []
-    out = []
+    out: List[Dict[str, Any]] = []
     with p.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                out.append(json.loads(line))
-            except Exception:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                # skip broken lines
                 continue
+            if isinstance(rec, dict):
+                out.append(rec)
     return out
+
 
 def append_equation(root: Path, rec: EquationRecord) -> None:
     p = equations_path(root, rec.paper_id)
