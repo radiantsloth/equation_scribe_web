@@ -3,6 +3,7 @@ import os
 import hashlib
 from typing import List, Dict, Any
 
+from fastapi import Body
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -112,3 +113,14 @@ def validate(payload: LatexPayload):
 
 def canonical_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+@app.put("/papers/{paper_id}/equations/{eq_uid}")
+def update_equation_endpoint(paper_id: str, eq_uid: str, rec: EquationRecord):
+    if rec.paper_id != paper_id:
+        raise HTTPException(400, "paper_id mismatch")
+    if rec.eq_uid != eq_uid:
+        raise HTTPException(400, "eq_uid mismatch")
+    # use storage.update_equation
+    from .storage import update_equation
+    update_equation(DATA_ROOT, paper_id, eq_uid, rec.model_dump() if hasattr(rec, "model_dump") else rec.dict())
+    return {"ok": True}
