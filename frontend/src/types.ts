@@ -32,3 +32,4 @@ export async function updateEquation(paperId: string, eqUid: string, payload: an
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+

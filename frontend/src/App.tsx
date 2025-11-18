@@ -6,6 +6,7 @@ import {
   getPageCount,
   listEquations,
   saveEquation,
+  updateEquation,
   validateLatex,
   uploadPdf,
 } from "./api/client";
@@ -199,43 +200,6 @@ async function onSave() {
   }
 }
 
-
-    const rec: EquationRecord = {
-      eq_uid: crypto.randomUUID().slice(0, 16),
-      paper_id: paperId,
-      latex,
-      notes,
-      boxes: currentBoxes.map((b) => ({ page: b.page, bbox_pdf: b.bbox_pdf })),
-    };
-
-    try {
-      await saveEquation(paperId, rec);
-      setStatus(`✅ Saved ${currentBoxes.length} box(es).`);
-      setCurrentBoxes([]);
-
-      // reload equations from backend to keep canonical
-      const saved = await listEquations(paperId);
-      const eqs: EquationRecord[] = saved.items || [];
-      setEquations(eqs);
-
-      // rebuild savedBoxes
-      const sBoxes: SavedBox[] = [];
-      for (const eq of eqs) {
-        eq.boxes.forEach((b, idx) => {
-          sBoxes.push({
-            page: b.page,
-            bbox_pdf: b.bbox_pdf,
-            eq_uid: eq.eq_uid,
-            box_idx: idx,
-            id: `saved-${eq.eq_uid}-${idx}`,
-          });
-        });
-      }
-      setSavedBoxes(sBoxes);
-    } catch (e: any) {
-      setStatus(`❌ ${e.message || e}`);
-    }
-  }
 
   // When a saved box is selected on the canvas, load the corresponding equation's latex
   function handleSelectSaved(eq_uid: string, boxId: string) {
