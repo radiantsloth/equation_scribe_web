@@ -16,9 +16,11 @@ from .services.validate import validate_latex
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
-DATA_ROOT = Path(os.getenv("DATA_ROOT", APP_ROOT / "data"))
-PDF_ROOT = DATA_ROOT / "pdfs"
-PDF_ROOT.mkdir(parents=True, exist_ok=True)
+PROFILES_ROOT = Path(os.getenv("PROFILES_ROOT"))
+PAPERS_ROOT = Path(os.getenv("PAPERS_ROOT"))
+# Ensure directories exist
+PROFILES_ROOT.mkdir(parents=True, exist_ok=True)
+PAPERS_ROOT.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Equation Scribe API (React + Konva)")
 
@@ -51,7 +53,7 @@ def slugify(name: str) -> str:
 
 
 def pdf_path_for(paper_id: str) -> Path:
-    p = PDF_ROOT / f"{paper_id}.pdf"
+    p = PAPERS_ROOT / f"{paper_id}.pdf"
     if not p.exists():
         raise HTTPException(404, f"PDF for paper_id '{paper_id}' not found")
     return p
@@ -63,7 +65,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(400, "Only PDF files are supported")
 
     paper_id = slugify(file.filename)
-    dest = PDF_ROOT / f"{paper_id}.pdf"
+    dest = PAPERS_ROOT / f"{paper_id}.pdf"
 
     contents = await file.read()
     dest.write_bytes(contents)
@@ -92,7 +94,7 @@ def get_page_meta(paper_id: str, idx: int, zoom: float = 1.5):
 
 @app.get("/papers/{paper_id}/equations")
 def list_equations(paper_id: str) -> Dict[str, Any]:
-    items = read_equations(DATA_ROOT, paper_id)
+    items = read_equations(PROFILES_ROOT, paper_id)
     return {"items": items}
 
 
@@ -102,7 +104,7 @@ def save_equation(paper_id: str, rec: EquationRecord):
         raise HTTPException(400, "At least one box is required")
     if rec.paper_id != paper_id:
         raise HTTPException(400, "paper_id mismatch")
-    append_equation(DATA_ROOT, rec)
+    append_equation(PROFILES_ROOT, rec)
     return {"ok": True}
 
 
