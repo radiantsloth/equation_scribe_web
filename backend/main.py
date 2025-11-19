@@ -30,7 +30,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "*",  # fine for local dev; tighten later if you like
+        # "*",  # fine for local dev; tighten later if you like
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -124,5 +124,5 @@ def update_equation_endpoint(paper_id: str, eq_uid: str, rec: EquationRecord):
         raise HTTPException(400, "eq_uid mismatch")
     # use storage.update_equation
     from .storage import update_equation
-    update_equation(DATA_ROOT, paper_id, eq_uid, rec.model_dump() if hasattr(rec, "model_dump") else rec.dict())
+    update_equation(PROFILES_ROOT, paper_id, eq_uid, rec.model_dump() if hasattr(rec, "model_dump") else rec.dict())
     return {"ok": True}

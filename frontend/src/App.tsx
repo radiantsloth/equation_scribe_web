@@ -1,5 +1,5 @@
 // frontend/src/App.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import PdfImage from "./pdf/PdfImage";
 import Boxes from "./canvas/Boxes";
 import {
@@ -11,6 +11,8 @@ import {
   uploadPdf,
 } from "./api/client";
 import type { Box, SavedBox, EquationRecord } from "./types";
+import "katex/dist/katex.min.css";
+import LaTeXPreview from "./components/LaTeXPreview";
 
 export default function App() {
   const [paperId, setPaperId] = useState<string | null>(null);
@@ -93,16 +95,25 @@ export default function App() {
     }
   };
 
-  function handleImageReady(image: HTMLImageElement, meta: any) {
+  // function handleImageReady(image: HTMLImageElement, meta: any) {
+  //   setImg(image);
+  //   setPagePx({ width: meta.width_px, height: meta.height_px });
+  //   setPdfDims({ widthPts: meta.width_pts, heightPts: meta.height_pts });
+  // }
+  const handleImageReady = useCallback((image: HTMLImageElement, meta: any) => {
+    // We only update state with stable values. setState functions are stable,
+    // so this callback can safely be memoized with an empty deps array.
     setImg(image);
     setPagePx({ width: meta.width_px, height: meta.height_px });
     setPdfDims({ widthPts: meta.width_pts, heightPts: meta.height_pts });
-  }
-
+  }, []);
+  
   async function onValidate() {
     const r = await validateLatex(latex);
     setStatus(r.ok ? "✅ OK" : `❌ ${r.errors?.join("; ") || ""}`);
   }
+
+  
 
 // Save: create new equation OR update an existing one
 async function onSave() {
@@ -305,6 +316,13 @@ async function onSave() {
           <div>Current (red): {currentBoxes.filter((b) => b.page === pageIndex).length} on this page</div>
           <div style={{ marginTop: 8, color: "#666" }}>{status}</div>
         </div>
+
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontWeight: 600 }}>Rendered:</label>
+          <div style={{ border: "1px solid #eee", padding: 8, minHeight: 48, background: "#fff" }}>
+            <LaTeXPreview latex={latex} />
+        </div>
+  </div>
       </div>
     </div>
   );

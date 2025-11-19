@@ -122,42 +122,38 @@ export default function Boxes({
     if (onSavedBoxChange) onSavedBoxChange(savedId, { page: pageIndex, bbox_pdf: bbox, id: savedId });
   }
 
-  function onSavedTransformEnd(savedId: string, e:any){
-    const node = e.target;
-    const sx = node.scaleX();
-    const sy = node.scaleY();
-    node.scaleX(1); node.scaleY(1);
-    const x = node.x(), y = node.y();
-    const w = node.width() * sx, h = node.height() * sy;
+  function nodeToPdfBBox(node:any) {
+    // node: Konva node after transform
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    const x = node.x();
+    const y = node.y();
+    const width = node.width() * scaleX;
+    const height = node.height() * scaleY;
+    // Reset scale for future transforms
+    node.scaleX(1);
+    node.scaleY(1);
     const p0 = pxToPdf(x, y);
-    const p1 = pxToPdf(x + w, y + h);
-    const bbox:[number,number,number,number] = [
-      Math.min(p0.x, p1.x), Math.min(p0.y, p1.y),
-      Math.max(p0.x, p1.x), Math.max(p0.y, p1.y),
-    ];
-    if (onSavedBoxChange) onSavedBoxChange(savedId, { page: pageIndex, bbox_pdf: bbox, id: savedId });
+   const p1 = pxToPdf(x + width, y + height);
+   return [Math.min(p0.x, p1.x), Math.min(p0.y, p1.y), Math.max(p0.x, p1.x), Math.max(p0.y, p1.y)] as [number,number,number,number];
   }
 
-  function onRectDragMove(id:string, e:any){
+  function onSavedTransformEnd(savedId: string, e:any){
     const node = e.target;
-    const {x,y,width,height,scaleX,scaleY} = node.attrs;
-    const w = width * scaleX, h = height * scaleY;
-    const p0 = pxToPdf(x, y);
-    const p1 = pxToPdf(x + w, y + h);
-    const bbox:[number,number,number,number] = [
-      Math.min(p0.x, p1.x), Math.min(p0.y, p1.y),
-      Math.max(p0.x, p1.x), Math.max(p0.y, p1.y),
-    ];
-    setCurrentBoxes(currentBoxes.map(b => b.id===id ? {...b, bbox_pdf: bbox} : b));
+    const bbox = nodeToPdfBBox(node);
+    if (onSavedBoxChange) onSavedBoxChange(savedId, { page: pageIndex, bbox_pdf: bbox, id: savedId });
   }
 
   function onRectTransformEnd(id:string, e:any){
     const node = e.target;
-    const sx = node.scaleX();
-    const sy = node.scaleY();
-    node.scaleX(1); node.scaleY(1);
-    const x = node.x(), y = node.y();
-    const w = node.width() * sx, h = node.height() * sy;
+    const bbox = nodeToPdfBBox(node);
+    setCurrentBoxes(currentBoxes.map(b => b.id===id ? {...b, bbox_pdf: bbox} : b));
+  }
+  
+  function onRectDragMove(id:string, e:any){
+    const node = e.target;
+    const {x,y,width,height,scaleX,scaleY} = node.attrs;
+    const w = width * scaleX, h = height * scaleY;
     const p0 = pxToPdf(x, y);
     const p1 = pxToPdf(x + w, y + h);
     const bbox:[number,number,number,number] = [
@@ -225,8 +221,20 @@ export default function Boxes({
           />
         ))}
 
-        <Transformer ref={trRef} rotateEnabled={false}
-          enabledAnchors={["top-left","top-right","bottom-left","bottom-right"]}/>
+        <Transformer
+          ref={trRef}
+          rotateEnabled={false}
+          enabledAnchors={[
+            "top-left",
+            "top-center",
+            "top-right",
+            "middle-left",
+            "middle-right",
+            "bottom-left",
+            "bottom-center",
+            "bottom-right",
+          ]}
+        />
         {dragRect && (
           <Rect x={dragRect.x} y={dragRect.y} width={dragRect.w} height={dragRect.h}
                 stroke="#2a8" dash={[6,4]} listening={false}/>
