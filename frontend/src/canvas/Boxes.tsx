@@ -13,6 +13,8 @@ type Props = {
   setCurrentBoxes: (b: Box[]) => void;
 
   onSelectSaved?: (eq_uid: string, boxId: string) => void;
+  onDeleteSaved?: (boxId: string) => void;
+
   onSavedBoxChange?: (boxId: string, newBox: Box) => void;
 };
 
@@ -149,7 +151,7 @@ export default function Boxes({
     const bbox = nodeToPdfBBox(node);
     setCurrentBoxes(currentBoxes.map(b => b.id===id ? {...b, bbox_pdf: bbox} : b));
   }
-  
+
   function onRectDragMove(id:string, e:any){
     const node = e.target;
     const {x,y,width,height,scaleX,scaleY} = node.attrs;
@@ -165,6 +167,13 @@ export default function Boxes({
 
   function deleteSelected(){
     if (!selectedId) return;
+    // If selected is a saved box, delegate to parent handler
+    if (selectedId.startsWith("saved-")) {
+      if (onDeleteSaved) onDeleteSaved(selectedId);
+      setSelectedId(null);
+      return;
+    }
+    // Otherwise delete from current boxes
     setCurrentBoxes(currentBoxes.filter(b => b.id !== selectedId));
     setSelectedId(null);
   }

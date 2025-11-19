@@ -107,6 +107,7 @@ export default function App() {
     setPagePx({ width: meta.width_px, height: meta.height_px });
     setPdfDims({ widthPts: meta.width_pts, heightPts: meta.height_pts });
   }, []);
+
   
   async function onValidate() {
     const r = await validateLatex(latex);
@@ -142,6 +143,8 @@ async function onSave() {
         };
 
         // Call update endpoint (PUT) to persist changes in-place
+        console.log("Updating equation (SAVE) payload:", updated);
+
         await updateEquation(paperId, existing.eq_uid, updated);
 
         setStatus("✅ Updated existing equation.");
@@ -253,6 +256,79 @@ async function onSave() {
     );
   }
 
+    // Delete the currently selected saved box (persist change via PUT)
+  async function handleDeleteSavedBox() {
+    if (!paperId) {
+      setStatus("❌ No PDF loaded.");
+      return;
+    }
+    if (!selectedBoxId) {
+      setStatus("❌ No box selected.");
+      return;
+    }
+
+    // Ensure it's a saved box
+    const sb = savedBoxes.find((s) => s.id === selectedBoxId);
+    if (!sb) {
+      setStatus("❌ Selected box is not a saved box.");
+      return;
+    }
+
+    const { eq_uid, box_idx } = sb;
+
+    // Find the equation to update
+    const eq = equations.find((e) => e.eq_uid === eq_uid);
+    if (!eq) {
+      setStatus("❌ Could not find matching equation.");
+      return;
+    }
+
+    // Build an updated equation record with that box removed
+    const newBoxes = eq.boxes.filter((b, idx) => idx !== box_idx);
+    const updated: EquationRecord = {
+      eq_uid: eq.eq_uid,
+      paper_id: paperId,
+      latex: eq.latex ?? "",
+      notes: eq.notes ?? "",
+      boxes: newBoxes,
+    };
+
+    try {
+      // debug: show payload in console to help diagnose network errors
+      console.log("Updating equation (DELETE BOX) payload:", updated);
+      await updateEquation(paperId, eq.eq_uid, updated);
+
+      setStatus("✅ Deleted saved box and updated backend.");
+
+      // Reload canonical equations from backend so indices & box_idx are consistent
+      const saved = await listEquations(paperId);
+      const eqs: EquationRecord[] = saved.items || [];
+      setEquations(eqs);
+
+      // Rebuild savedBoxes
+      const sBoxes: SavedBox[] = [];
+      for (const e of eqs) {
+        e.boxes.forEach((b, idx) => {
+          sBoxes.push({
+            page: b.page,
+            bbox_pdf: b.bbox_pdf,
+            eq_uid: e.eq_uid,
+            box_idx: idx,
+            id: `saved-${e.eq_uid}-${idx}`,
+          });
+        });
+      }
+      setSavedBoxes(sBoxes);
+
+      // Clear selection
+      setSelectedBoxId(null);
+      setSelectedEqUid(null);
+    } catch (err: any) {
+      console.error("Error during update (DELETE BOX):", err);
+      setStatus(`❌ Error deleting saved box: ${err?.message ?? String(err)}`);
+    }
+  }
+
   // Create SavedBox[] convenience for Boxes component (already maintained above but keep in sync)
   // (No extra code needed here because we update savedBoxes on load/save/edit.)
 
@@ -274,6 +350,11 @@ async function onSave() {
             setCurrentBoxes={setCurrentBoxes}
             onSelectSaved={handleSelectSaved}
             onSavedBoxChange={handleSavedBoxChange}
+            onDeleteSaved={(boxId: string) => {
+              // Select the saved box, then call the central delete handler
+              setSelectedBoxId(boxId);
+              handleDeleteSavedBox();
+            }}
           />
         </div>
       </div>
@@ -307,6 +388,12 @@ async function onSave() {
             <button disabled={!hasPdf} onClick={onValidate}>Check</button>
             <button disabled={!hasPdf} onClick={onSave}>Approve & Save</button>
             <button disabled={!hasPdf} onClick={() => setCurrentBoxes([])}>Clear Current Boxes</button>
+            <button
+            disabled={!hasPdf || !selectedBoxId || !savedBoxes.some(sb => sb.id === selectedBoxId)}
+            onClick={handleDeleteSavedBox}
+            >
+              Delete Saved Box
+            </button>  
           </div>
         </div>
 
@@ -321,8 +408,21 @@ async function onSave() {
           <label style={{ fontWeight: 600 }}>Rendered:</label>
           <div style={{ border: "1px solid #eee", padding: 8, minHeight: 48, background: "#fff" }}>
             <LaTeXPreview latex={latex} />
+          </div>
         </div>
-  </div>
+
+        {/* <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button disabled={!hasPdf} onClick={onValidate}>Check</button>
+          <button disabled={!hasPdf} onClick={onSave}>Approve & Save</button>
+          <button disabled={!hasPdf} onClick={() => setCurrentBoxes([])}>Clear Current Boxes</button>
+          <button
+            disabled={!hasPdf || !selectedBoxId || !savedBoxes.some(sb => sb.id === selectedBoxId)}
+            onClick={handleDeleteSavedBox}
+          >
+            Delete Saved Box
+          </button>
+        </div> */}
+
       </div>
     </div>
   );
