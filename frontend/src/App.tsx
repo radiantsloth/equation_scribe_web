@@ -257,7 +257,7 @@ async function onSave() {
     );
   }
 
-    // Delete the currently selected saved box (persist change via DELETE or PUT)
+  // Delete the currently selected saved box (persist change via DELETE or PUT)
   async function handleDeleteSavedBox() {
     if (!paperId) {
       setStatus("❌ No PDF loaded.");
@@ -295,6 +295,13 @@ async function onSave() {
         setStatus("✅ Deleted equation (last box removed).");
       } else {
         // Otherwise, update the existing equation with the remaining boxes.
+        const updated: EquationRecord = {
+          eq_uid: eq.eq_uid,
+          paper_id: paperId,
+          latex: eq.latex ?? "",
+          notes: eq.notes ?? "",
+          boxes: newBoxes,
+        };
         console.log("Updating equation (DELETE BOX) payload:", updated);
         await updateEquation(paperId, eq_uid, updated);
         setStatus("✅ Deleted saved box and updated backend.");
@@ -327,17 +334,8 @@ async function onSave() {
       console.error("Error during delete/update (DELETE BOX):", err);
       setStatus(`❌ Error deleting saved box: ${err?.message ?? String(err)}`);
     }
-
-      setSavedBoxes(sBoxes);
-
-      // Clear selection
-      setSelectedBoxId(null);
-      setSelectedEqUid(null);
-    } catch (err: any) {
-      console.error("Error during delete/update (DELETE BOX):", err);
-      setStatus(`❌ Error deleting saved box: ${err?.message ?? String(err)}`);
-    }
   }
+
 
 
   // Create SavedBox[] convenience for Boxes component (already maintained above but keep in sync)
