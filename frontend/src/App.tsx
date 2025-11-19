@@ -7,6 +7,7 @@ import {
   listEquations,
   saveEquation,
   updateEquation,
+  deleteEquation,
   validateLatex,
   uploadPdf,
 } from "./api/client";
@@ -256,7 +257,7 @@ async function onSave() {
     );
   }
 
-    // Delete the currently selected saved box (persist change via PUT)
+    // Delete the currently selected saved box (persist change via DELETE or PUT)
   async function handleDeleteSavedBox() {
     if (!paperId) {
       setStatus("❌ No PDF loaded.");
@@ -285,20 +286,19 @@ async function onSave() {
 
     // Build an updated equation record with that box removed
     const newBoxes = eq.boxes.filter((b, idx) => idx !== box_idx);
-    const updated: EquationRecord = {
-      eq_uid: eq.eq_uid,
-      paper_id: paperId,
-      latex: eq.latex ?? "",
-      notes: eq.notes ?? "",
-      boxes: newBoxes,
-    };
 
     try {
-      // debug: show payload in console to help diagnose network errors
-      console.log("Updating equation (DELETE BOX) payload:", updated);
-      await updateEquation(paperId, eq.eq_uid, updated);
-
-      setStatus("✅ Deleted saved box and updated backend.");
+      // If no boxes remain after removing this one, delete the whole equation record.
+      if (newBoxes.length === 0) {
+        console.log("Deleting entire equation (no boxes remaining):", { paperId, eq_uid });
+        await deleteEquation(paperId, eq_uid);
+        setStatus("✅ Deleted equation (last box removed).");
+      } else {
+        // Otherwise, update the existing equation with the remaining boxes.
+        console.log("Updating equation (DELETE BOX) payload:", updated);
+        await updateEquation(paperId, eq_uid, updated);
+        setStatus("✅ Deleted saved box and updated backend.");
+      }
 
       // Reload canonical equations from backend so indices & box_idx are consistent
       const saved = await listEquations(paperId);
@@ -324,10 +324,21 @@ async function onSave() {
       setSelectedBoxId(null);
       setSelectedEqUid(null);
     } catch (err: any) {
-      console.error("Error during update (DELETE BOX):", err);
+      console.error("Error during delete/update (DELETE BOX):", err);
+      setStatus(`❌ Error deleting saved box: ${err?.message ?? String(err)}`);
+    }
+
+      setSavedBoxes(sBoxes);
+
+      // Clear selection
+      setSelectedBoxId(null);
+      setSelectedEqUid(null);
+    } catch (err: any) {
+      console.error("Error during delete/update (DELETE BOX):", err);
       setStatus(`❌ Error deleting saved box: ${err?.message ?? String(err)}`);
     }
   }
+
 
   // Create SavedBox[] convenience for Boxes component (already maintained above but keep in sync)
   // (No extra code needed here because we update savedBoxes on load/save/edit.)

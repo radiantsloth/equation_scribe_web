@@ -126,3 +126,11 @@ def update_equation_endpoint(paper_id: str, eq_uid: str, rec: EquationRecord):
     from .storage import update_equation
     update_equation(PROFILES_ROOT, paper_id, eq_uid, rec.model_dump() if hasattr(rec, "model_dump") else rec.dict())
     return {"ok": True}
+
+@app.delete("/papers/{paper_id}/equations/{eq_uid}")
+def delete_equation_endpoint(paper_id: str, eq_uid: str):
+    from .storage import delete_equation
+    ok = delete_equation(PROFILES_ROOT, paper_id, eq_uid)
+    if not ok:
+        raise HTTPException(404, "Equation not found")
+    return {"ok": True}

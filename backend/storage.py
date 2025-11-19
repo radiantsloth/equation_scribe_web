@@ -78,3 +78,38 @@ def update_equation(root: Path, paper_id: str, eq_uid: str, new_record: Dict[str
 
     with p.open("w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
+
+def delete_equation(root: Path, paper_id: str, eq_uid: str) -> bool:
+    """
+    Remove the equation record with eq_uid from the JSONL file for paper_id.
+    Returns True if an equation was removed, False if not found.
+    """
+    p = equations_path(root, paper_id)
+    if not p.exists():
+        return False
+
+    lines = []
+    removed = False
+    with p.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                # keep malformed lines unchanged
+                lines.append(line)
+                continue
+            if obj.get("eq_uid") == eq_uid:
+                removed = True
+                # skip this line (delete)
+            else:
+                lines.append(json.dumps(obj, ensure_ascii=False))
+
+    if not removed:
+        return False
+
+    with p.open("w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return True
