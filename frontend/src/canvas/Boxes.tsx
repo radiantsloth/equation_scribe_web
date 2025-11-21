@@ -13,6 +13,7 @@ type Props = {
   setCurrentBoxes: (b: Box[]) => void;
 
   onSelectSaved?: (eq_uid: string, boxId: string) => void;
+  
   onDeleteSaved?: (boxId: string) => void;
 
   onSavedBoxChange?: (boxId: string, newBox: Box) => void;
@@ -27,6 +28,7 @@ export default function Boxes({
   currentBoxes,
   setCurrentBoxes,
   onSelectSaved,
+  onDeleteSaved,
   onSavedBoxChange,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
