@@ -13,6 +13,7 @@ export default function PdfImage({ paperId, pageIndex, zoom, onImageReady }: Pro
   const [src, setSrc] = useState<string>("");
 
   useEffect(() => {
+    // console.log("PdfImage useEffect run", { paperId, pageIndex, zoom, onImageReady });
     let cancelled = false;
 
     async function run() {

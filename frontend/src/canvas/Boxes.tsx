@@ -1,24 +1,41 @@
+// frontend/src/canvas/Boxes.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Stage, Layer, Rect, Transformer, Image as KonvaImage } from "react-konva";
-import type { Box } from "../types";
+import type { Box, SavedBox } from "../types";
 
 type Props = {
   pageIndex: number;
   image: HTMLImageElement | null;
   pagePx: { width: number; height: number };
   pdfDims: { widthPts: number; heightPts: number };
-  savedBoxes: Box[];
+  savedBoxes: SavedBox[];      // saved boxes WITH eq_uid + box_idx + id
   currentBoxes: Box[];
   setCurrentBoxes: (b: Box[]) => void;
+
+  onSelectSaved?: (eq_uid: string, boxId: string) => void;
+  onDeleteSaved?: (boxId: string) => void;
+
+  onSavedBoxChange?: (boxId: string, newBox: Box) => void;
 };
 
-export default function Boxes({ pageIndex, image, pagePx, pdfDims, savedBoxes, currentBoxes, setCurrentBoxes }: Props) {
+export default function Boxes({
+  pageIndex,
+  image,
+  pagePx,
+  pdfDims,
+  savedBoxes,
+  currentBoxes,
+  setCurrentBoxes,
+  onSelectSaved,
+  onSavedBoxChange,
+}: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const trRef = useRef<any>(null);
+  const layerRef = useRef<any>(null);
 
   // PDF points <-> pixel transforms
-  const scaleX = pagePx.width / pdfDims.widthPts;
-  const scaleY = pagePx.height / pdfDims.heightPts;
+  const scaleX = pagePx.width / (pdfDims.widthPts || 1);
+  const scaleY = pagePx.height / (pdfDims.heightPts || 1);
   const pdfToPx = (x:number,y:number)=>({ x: x*scaleX, y: y*scaleY });
   const pxToPdf = (x:number,y:number)=>({ x: x/scaleX, y: y/scaleY });
 
@@ -38,12 +55,12 @@ export default function Boxes({ pageIndex, image, pagePx, pdfDims, savedBoxes, c
   const savedRects = useMemo(()=>{
     return savedBoxes
       .filter(b=>b.page===pageIndex)
-      .map((b,i)=>{
+      .map((b) => {
         const [x0,y0,x1,y1] = b.bbox_pdf;
         const p0 = pdfToPx(x0,y0), p1 = pdfToPx(x1,y1);
         const x = Math.min(p0.x, p1.x), y = Math.min(p0.y, p1.y);
         const w = Math.abs(p1.x - p0.x), h = Math.abs(p1.y - p0.y);
-        return {...b, id:`saved-${i}`, x, y, w, h};
+        return { ...b, x, y, w, h };
       });
   }, [savedBoxes, pageIndex, scaleX, scaleY]);
 
@@ -54,7 +71,7 @@ export default function Boxes({ pageIndex, image, pagePx, pdfDims, savedBoxes, c
     const sel = stage?.findOne(`#${selectedId}`);
     if (sel) tr.nodes([sel]); else tr.nodes([]);
     tr.getLayer()?.batchDraw();
-  }, [selectedId, currentRects]);
+  }, [selectedId, currentRects, savedRects]);
 
   // Rubber-band draw
   const [dragStart, setDragStart] = useState<{x:number;y:number}|null>(null);
@@ -94,6 +111,47 @@ export default function Boxes({ pageIndex, image, pagePx, pdfDims, savedBoxes, c
     setDragRect(null);
   }
 
+  function onSavedDragEnd(savedId: string, e:any){
+    const node = e.target;
+    const {x,y,width,height,scaleX: sx, scaleY: sy} = node.attrs;
+    const w = width * sx, h = height * sy;
+    const p0 = pxToPdf(x, y);
+    const p1 = pxToPdf(x + w, y + h);
+    const bbox:[number,number,number,number] = [
+      Math.min(p0.x, p1.x), Math.min(p0.y, p1.y),
+      Math.max(p0.x, p1.x), Math.max(p0.y, p1.y),
+    ];
+    if (onSavedBoxChange) onSavedBoxChange(savedId, { page: pageIndex, bbox_pdf: bbox, id: savedId });
+  }
+
+  function nodeToPdfBBox(node:any) {
+    // node: Konva node after transform
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    const x = node.x();
+    const y = node.y();
+    const width = node.width() * scaleX;
+    const height = node.height() * scaleY;
+    // Reset scale for future transforms
+    node.scaleX(1);
+    node.scaleY(1);
+    const p0 = pxToPdf(x, y);
+   const p1 = pxToPdf(x + width, y + height);
+   return [Math.min(p0.x, p1.x), Math.min(p0.y, p1.y), Math.max(p0.x, p1.x), Math.max(p0.y, p1.y)] as [number,number,number,number];
+  }
+
+  function onSavedTransformEnd(savedId: string, e:any){
+    const node = e.target;
+    const bbox = nodeToPdfBBox(node);
+    if (onSavedBoxChange) onSavedBoxChange(savedId, { page: pageIndex, bbox_pdf: bbox, id: savedId });
+  }
+
+  function onRectTransformEnd(id:string, e:any){
+    const node = e.target;
+    const bbox = nodeToPdfBBox(node);
+    setCurrentBoxes(currentBoxes.map(b => b.id===id ? {...b, bbox_pdf: bbox} : b));
+  }
+
   function onRectDragMove(id:string, e:any){
     const node = e.target;
     const {x,y,width,height,scaleX,scaleY} = node.attrs;
@@ -107,24 +165,15 @@ export default function Boxes({ pageIndex, image, pagePx, pdfDims, savedBoxes, c
     setCurrentBoxes(currentBoxes.map(b => b.id===id ? {...b, bbox_pdf: bbox} : b));
   }
 
-  function onRectTransformEnd(id:string, e:any){
-    const node = e.target;
-    const sx = node.scaleX();
-    const sy = node.scaleY();
-    node.scaleX(1); node.scaleY(1);
-    const x = node.x(), y = node.y();
-    const w = node.width() * sx, h = node.height() * sy;
-    const p0 = pxToPdf(x, y);
-    const p1 = pxToPdf(x + w, y + h);
-    const bbox:[number,number,number,number] = [
-      Math.min(p0.x, p1.x), Math.min(p0.y, p1.y),
-      Math.max(p0.x, p1.x), Math.max(p0.y, p1.y),
-    ];
-    setCurrentBoxes(currentBoxes.map(b => b.id===id ? {...b, bbox_pdf: bbox} : b));
-  }
-
   function deleteSelected(){
     if (!selectedId) return;
+    // If selected is a saved box, delegate to parent handler
+    if (selectedId.startsWith("saved-")) {
+      if (onDeleteSaved) onDeleteSaved(selectedId);
+      setSelectedId(null);
+      return;
+    }
+    // Otherwise delete from current boxes
     setCurrentBoxes(currentBoxes.filter(b => b.id !== selectedId));
     setSelectedId(null);
   }
@@ -140,12 +189,37 @@ export default function Boxes({ pageIndex, image, pagePx, pdfDims, savedBoxes, c
       onKeyDown={(e:any)=>{ if (e.key === "Delete") deleteSelected(); }}
       style={{border: "1px solid #ddd"}}
     >
-      <Layer>
+      <Layer ref={layerRef}>
         <KonvaImage image={image || undefined} name="bg" listening={true}/>
-        {savedRects.map(r => (
-          <Rect key={r.id} x={r.x} y={r.y} width={r.w} height={r.h}
-                stroke="gray" dash={[4,4]} listening={false}/>
-        ))}
+
+        {savedRects.map(r => {
+          const isSelected = r.id === selectedId;
+          return (
+            <Rect
+              key={r.id}
+              id={r.id}
+              x={r.x}
+              y={r.y}
+              width={r.w}
+              height={r.h}
+              stroke={isSelected ? "red" : "gray"}
+              dash={isSelected ? undefined : [4,4]}
+              fill={isSelected ? "rgba(255,0,0,0.06)" : undefined}
+              draggable={isSelected}
+              onClick={()=>{
+                setSelectedId(r.id);
+                if (onSelectSaved) onSelectSaved(r.eq_uid, r.id);
+              }}
+              onTap={()=>{
+                setSelectedId(r.id);
+                if (onSelectSaved) onSelectSaved(r.eq_uid, r.id);
+              }}
+              onDragEnd={(e)=>onSavedDragEnd(r.id, e)}
+              onTransformEnd={(e)=>onSavedTransformEnd(r.id, e)}
+            />
+          );
+        })}
+
         {currentRects.map(r => (
           <Rect key={r.id} id={r.id} x={r.x} y={r.y} width={r.w} height={r.h}
                 stroke="red" fill="rgba(255,0,0,0.06)" draggable
@@ -155,8 +229,21 @@ export default function Boxes({ pageIndex, image, pagePx, pdfDims, savedBoxes, c
                 onTransformEnd={(e)=>onRectTransformEnd(r.id!, e)}
           />
         ))}
-        <Transformer ref={trRef} rotateEnabled={false}
-          enabledAnchors={["top-left","top-right","bottom-left","bottom-right"]}/>
+
+        <Transformer
+          ref={trRef}
+          rotateEnabled={false}
+          enabledAnchors={[
+            "top-left",
+            "top-center",
+            "top-right",
+            "middle-left",
+            "middle-right",
+            "bottom-left",
+            "bottom-center",
+            "bottom-right",
+          ]}
+        />
         {dragRect && (
           <Rect x={dragRect.x} y={dragRect.y} width={dragRect.w} height={dragRect.h}
                 stroke="#2a8" dash={[6,4]} listening={false}/>

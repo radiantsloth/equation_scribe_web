@@ -61,3 +61,22 @@ export async function validateLatex(latex: string) {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
+// frontend/src/api/client.ts
+export async function updateEquation(paperId: string, eqUid: string, payload: any) {
+  const r = await fetch(`${API}/papers/${paperId}/equations/${encodeURIComponent(eqUid)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function deleteEquation(paperId: string, eqUid: string) {
+  const r = await fetch(`${API}/papers/${paperId}/equations/${encodeURIComponent(eqUid)}`, {
+    method: "DELETE",
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
