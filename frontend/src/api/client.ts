@@ -80,3 +80,12 @@ export async function deleteEquation(paperId: string, eqUid: string) {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
+// frontend/src/api/client.ts
+export async function findProfileByPdf(basename: string) {
+  const url = `${API}/papers/find_by_pdf?basename=${encodeURIComponent(basename)}`;
+  const r = await fetch(url);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}

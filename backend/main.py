@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import hashlib
+import json
 from typing import List, Dict, Any
 
 from fastapi import Body
@@ -58,6 +59,18 @@ def pdf_path_for(paper_id: str) -> Path:
         raise HTTPException(404, f"PDF for paper_id '{paper_id}' not found")
     return p
 
+# helper to load the index file from PROFILES_ROOT
+def load_profiles_index() -> dict:
+    idx_path = PROFILES_ROOT / "index.json"
+    if not idx_path.exists():
+        return {"version": 1, "papers": {}, "by_pdf_basename": {}}
+    try:
+        with idx_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        # log and return a safe skeleton
+        print("Error reading index.json:", e)
+        return {"version": 1, "papers": {}, "by_pdf_basename": {}}
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_pdf(file: UploadFile = File(...)):
@@ -78,6 +91,30 @@ def get_pages(paper_id: str):
     p = pdf_path_for(paper_id)
     return {"pages": page_count(p)}
 
+
+@app.get("/papers/index")
+def get_profiles_index():
+    """Return the profiles index.json (small)."""
+    return load_profiles_index()
+
+
+@app.get("/papers/find_by_pdf")
+def find_by_pdf(basename: str):
+    """
+    Find the registered paper_id by PDF basename (relative filename),
+    e.g. ?basename=Research_on_SAR_Imaging_...pdf
+    """
+    idx = load_profiles_index()
+    pid = idx.get("by_pdf_basename", {}).get(basename)
+    if not pid:
+        raise HTTPException(404, "Profile not found for pdf basename")
+    paper_entry = idx.get("papers", {}).get(pid, {})
+    return {
+        "paper_id": pid,
+        "profiles_dir": paper_entry.get("profiles_dir", pid),
+        "pdf_basename": paper_entry.get("pdf_basename", basename),
+        "num_equations": paper_entry.get("num_equations", 0),
+    }
 
 @app.get("/papers/{paper_id}/page/{idx}/image")
 def get_page_image(paper_id: str, idx: int, zoom: float = 1.5):

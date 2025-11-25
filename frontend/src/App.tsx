@@ -9,6 +9,7 @@ import {
   updateEquation,
   deleteEquation,
   validateLatex,
+  findProfileByPdf,
   uploadPdf,
 } from "./api/client";
 import type { Box, SavedBox, EquationRecord } from "./types";
@@ -109,6 +110,58 @@ export default function App() {
     setPdfDims({ widthPts: meta.width_pts, heightPts: meta.height_pts });
   }, []);
 
+  function buildSavedBoxesFromEquations(eqs: EquationRecord[]): SavedBox[] {
+  const sBoxes: SavedBox[] = [];
+  for (const eq of eqs) {
+    eq.boxes.forEach((b, idx) => {
+      sBoxes.push({
+        page: b.page,
+        bbox_pdf: b.bbox_pdf,
+        eq_uid: eq.eq_uid,
+        box_idx: idx,
+        id: `saved-${eq.eq_uid}-${idx}`,
+      });
+    });
+  }
+  return sBoxes;
+}
+
+async function autoLoadProfileForPdf(pdfPath: string) {
+  const basename = pdfPath.split(/[\\/]/).pop()?.toLowerCase(); // normalize case
+  if (!basename) {
+    setStatus("❌ Could not determine PDF basename");
+    return;
+  }
+
+  // UX: show status/spinner during lookup
+  setStatus("🔎 Looking for existing profile...");
+
+  try {
+    const profile = await findProfileByPdf(basename);
+    if (!profile) {
+      setStatus("ℹ️ No existing profile found for this PDF.");
+      // Clear any previous profile state
+      setPaperId(null);
+      setEquations([]);
+      setSavedBoxes([]);
+      return;
+    }
+
+    const pid = profile.paper_id;
+    setPaperId(pid);
+    setStatus(`✅ Loaded profile for paper_id: ${pid}`);
+
+    // load equations and savedBoxes
+    const savedResp = await listEquations(pid);
+    const eqs: EquationRecord[] = savedResp.items || [];
+    setEquations(eqs);
+    setSavedBoxes(buildSavedBoxesFromEquations(eqs));
+  } catch (err: any) {
+    console.error("Error finding/loading profile:", err);
+    setStatus(`❌ Error during profile lookup: ${err?.message ?? String(err)}`);
+    setPaperId(null);
+  }
+}
   
   async function onValidate() {
     const r = await validateLatex(latex);
