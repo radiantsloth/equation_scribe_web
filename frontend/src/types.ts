@@ -23,6 +23,7 @@ export type EquationRecord = {
   boxes: Box[];
 };
 
+// --- NEW TYPES FOR SPIRAL 3 ---
 export interface DetectionCandidate {
   bbox_pdf: [number, number, number, number];
   latex: string;

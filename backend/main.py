@@ -235,3 +235,40 @@ def autodetect_page(paper_id: str, payload: AutoDetectRequest):
         })
         
     return {"candidates": results}
+
+class RescanRequest(BaseModel):
+    page_index: int
+    bbox: List[float]  # [x0, y0, x1, y1] (PDF coordinates)
+
+@app.post("/papers/{paper_id}/rescan_box")
+def rescan_box(paper_id: str, payload: RescanRequest):
+    """
+    Rescan a specific user-defined bounding box on a page.
+    """
+    # 1. Load PDF
+    try:
+        pdf_path = pdf_path_for(paper_id)
+    except NameError:
+         # Fallback if helper isn't imported
+        pdf_path = PAPERS_ROOT / f"{paper_id}.pdf"
+
+    doc = load_pdf(pdf_path)
+    
+    # 2. Prepare Image (150 DPI is usually sufficient for Latex-OCR)
+    # Using the same transform logic as autodetect
+    full_page_img = page_image(doc, payload.page_index, dpi=150)
+    pdf2px, _ = pdf_to_px_transform(doc, payload.page_index, dpi=150)
+
+    # 3. Convert PDF coords to Pixels
+    x0, y0, x1, y1 = payload.bbox
+    px0, py0 = pdf2px(x0, y0)
+    px1, py1 = pdf2px(x1, y1)
+
+    # Crop (ensure order for PIL)
+    crop_box = (min(px0, px1), min(py0, py1), max(px0, px1), max(py0, py1))
+    crop_img = full_page_img.crop(crop_box)
+
+    # 4. Run Inference
+    latex_result = image_to_latex(crop_img)
+    
+    return {"latex": latex_result}
