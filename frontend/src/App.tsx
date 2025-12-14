@@ -11,6 +11,7 @@ import {
   validateLatex,
   findProfileByPdf,
   uploadPdf,
+  rescanBox,
 } from "./api/client";
 import type { Box, SavedBox, EquationRecord } from "./types";
 import "katex/dist/katex.min.css";
@@ -349,6 +350,8 @@ async function onSave() {
       setStatus("❌ No box selected.");
       return;
     }
+  
+
 
     // Ensure it's a saved box
     const sb = savedBoxes.find((s) => s.id === selectedBoxId);
@@ -418,7 +421,31 @@ async function onSave() {
     }
   }
 
+  async function handleRescanSelected() {
+  if (!paperId || !selectedBoxId) return;
 
+  // Find the selected box object
+  const sb = savedBoxes.find((s) => s.id === selectedBoxId);
+  if (!sb) {
+    setStatus("❌ Select a saved box to rescan.");
+    return;
+  }
+
+  setStatus("⏳ Scanning selection...");
+  try {
+    const result = await rescanBox(paperId, sb.page, sb.bbox_pdf);
+
+    // Update the Latex Editor State
+    setLatex(result.latex);
+    setStatus("✅ Rescan complete.");
+
+    // Optional: Auto-save the new LaTeX to the backend immediately?
+    // For now, let's just update the text area so the user can verify before clicking "Approve".
+  } catch (err: any) {
+    console.error(err);
+    setStatus(`❌ Rescan error: ${err.message}`);
+  }
+}
 
   // Create SavedBox[] convenience for Boxes component (already maintained above but keep in sync)
   // (No extra code needed here because we update savedBoxes on load/save/edit.)
@@ -488,6 +515,14 @@ async function onSave() {
           <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: "100%" }} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button disabled={!hasPdf} onClick={onValidate}>Check</button>
+            <button 
+              disabled={!hasPdf || !selectedBoxId} 
+              onClick={handleRescanSelected}
+              style={{ backgroundColor: "#eef", border: "1px solid #ccd" }}
+              title="Run recognition on the currently selected box"
+            >
+              ↻ Rescan Box
+            </button>
             <button disabled={!hasPdf} onClick={onSave}>Approve & Save</button>
             <button disabled={!hasPdf} onClick={() => setCurrentBoxes([])}>Clear Current Boxes</button>
             <button
