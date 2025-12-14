@@ -15,6 +15,10 @@ from .storage import read_equations, append_equation
 from .services.pdf import page_count, render_page_png, page_meta
 from .services.validate import validate_latex
 
+from equation_scribe.recognition.inference import image_to_latex
+from equation_scribe.pdf_ingest import load_pdf, page_image, page_layout, page_size_points, pdf_to_px_transform
+from equation_scribe.detect import find_equation_candidates
+
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 PROFILES_ROOT = Path(os.getenv("PROFILES_ROOT"))
@@ -42,6 +46,8 @@ app.add_middleware(
 class LatexPayload(BaseModel):
     latex: str
 
+class AutoDetectRequest(BaseModel):
+    page_index: int
 
 class UploadResponse(BaseModel):
     paper_id: str
@@ -171,3 +177,61 @@ def delete_equation_endpoint(paper_id: str, eq_uid: str):
     if not ok:
         raise HTTPException(404, "Equation not found")
     return {"ok": True}
+
+@app.post("/papers/{paper_id}/autodetect_page")
+def autodetect_page(paper_id: str, payload: AutoDetectRequest):
+    """
+    1. Detect boxes using new column-aware logic.
+    2. Crop images.
+    3. Run OCR to get LaTeX.
+    """
+    # Use the existing helper to get the PDF path
+    try:
+        pdf_path = pdf_path_for(paper_id)
+    except NameError:
+        # Fallback if you haven't refactored pdf_path_for to be importable
+        # This assumes PAPERS_ROOT is defined in this file (which it is)
+        pdf_path = PAPERS_ROOT / f"{paper_id}.pdf"
+        if not pdf_path.exists():
+            raise HTTPException(404, f"PDF for paper_id '{paper_id}' not found")
+
+    doc = load_pdf(pdf_path)
+    
+    # 1. Get Spans & Detect
+    spans = page_layout(doc, payload.page_index)
+    width, height = page_size_points(doc, payload.page_index)
+    
+    # Run the new Spiral 1 detector
+    candidates = find_equation_candidates(spans, width)
+    
+    # 2. Recognition Loop (Spiral 2)
+    results = []
+    
+    # Render page once at 150 DPI for efficiency
+    full_page_img = page_image(doc, payload.page_index, dpi=150)
+    pdf2px, _ = pdf_to_px_transform(doc, payload.page_index, dpi=150)
+    
+    for cand in candidates:
+        x0, y0, x1, y1 = cand["bbox_pdf"]
+        
+        # Convert PDF coords to pixels for cropping
+        # pdf2px returns (x, y), we need to handle the two corners
+        px0, py0 = pdf2px(x0, y0) 
+        px1, py1 = pdf2px(x1, y1)
+        
+        # Ensure coordinates are ordered for PIL crop (left, upper, right, lower)
+        crop_box = (min(px0, px1), min(py0, py1), max(px0, px1), max(py0, py1))
+        
+        # Crop
+        crop_img = full_page_img.crop(crop_box)
+        
+        # 3. Predict LaTeX using the Spiral 2 inference engine
+        latex = image_to_latex(crop_img)
+        
+        results.append({
+            "bbox_pdf": cand["bbox_pdf"],
+            "latex": latex,
+            "score": cand["score"]
+        })
+        
+    return {"candidates": results}

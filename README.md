@@ -1,270 +1,126 @@
-# Equation Scribe – React + PDF.js + Konva + FastAPI Starter
-.
-# Run instructions: Backend
-From conda
-conda activate equation_scribe
-cd C:\Data\repos\equation_scribe_web
-uvicorn backend.main:app --reload --port 8000 --reload-dir backend
+# Equation Scribe Web (React + PDF.js + Konva + FastAPI)
 
-# Frontend
-# 1. Open a new terminal (PowerShell or CMD)
-
-# 2. Go to the frontend folder
-cd C:\Data\repos\equation_scribe_web\frontend
-
-# 3. Install dependencies (only needed once)
-npm install
-
-# 4. Start the development server
-npm run dev
-
-Here is a complete **README.md**, polished, structured, and ready to drop directly into the root of your `equation_scribe_web` repository.
+A PDF-based equation annotation tool (frontend + backend) that provides:
+- interactive PDF viewing and zoom
+- drawing / moving / resizing equation bounding boxes
+- LaTeX editing and KaTeX preview
+- LaTeX validation (SymPy/ANTLR)
+- saving per-paper structured JSONL「equations.jsonl」profiles
+- an index that maps PDFs → `paper_id` profiles for consistent loading
 
 ---
 
-# 📘 Equation Scribe Web UI
+## Repo layout
 
-*A PDF-based equation annotation tool using React, PDF.js, Konva, FastAPI, and Python.*
-
-Equation Scribe Web is the interactive user interface for building high-quality datasets of equations extracted from scientific PDFs. It allows you to:
-
-* View PDF pages with zooming
-* Draw equation bounding boxes
-* Drag, resize, and edit boxes
-* Enter LaTeX for each equation
-* Validate LaTeX against SymPy
-* Save structured JSONL records for downstream processing (RAG, model training, etc.)
-
-This project contains **two separate components**:
-
-* **Backend**: FastAPI server (Python)
-* **Frontend**: React + Vite + Konva (JavaScript/TypeScript)
-
----
-
-# 📁 Project Structure
-
-```
 equation_scribe_web/
-│
-├── backend/                 # FastAPI backend
-│   ├── main.py              # API entrypoint
-│   ├── pdf_utils.py         # Page rendering helpers
-│   ├── storage.py           # Equation JSONL persistence layer
-│   └── models.py            # Pydantic models
-│
-├── frontend/                # React + Vite frontend
-│   ├── src/
-│   │   ├── components/      # React components (PDF viewer, box editor)
-│   │   ├── canvas/          # Konva layers for drawing/resizing
-│   │   ├── App.tsx
-│   │   └── main.tsx
-│   ├── index.html
-│   ├── package.json
-│   └── vite.config.ts
-│
-└── paper_profiles/          # Saved JSONL equation annotations
-    └── sample-paper/
-        └── equations.jsonl
-```
+├── backend/ # FastAPI backend
+├── frontend/ # React + Vite + Konva frontend
+├── docs/ # Spiral roadmaps & documentation
+└── paper_profiles/ # saved JSONL profiles (local example)
+
 
 ---
 
-# 🚀 Quickstart
+## Quickstart (development)
 
-## 1. Prerequisites
+These examples assume Windows PowerShell and a Conda environment named `eqscribe`. Adjust paths and shell commands for Linux/macOS.
 
-### 🐍 Python (backend)
+### Prereqs
+- Python 3.10+ (3.11 tested)
+- Conda (recommended)
+- Node.js 18+ and npm 9+
+- Optional: Tesseract OCR installed & on PATH (for heuristic OCR in autodetect)
 
-* Python 3.10+ recommended
-* Your existing Conda environment is fine
-* Required pip packages are listed below
+### Environment
+Create/activate the conda environment (if you have `environment.yml`):
 
-### 🟩 Node.js (frontend)
+```powershell
+conda env create -f environment.yml -n eqscribe
+conda activate eqscribe
 
-Install from:
-[https://nodejs.org/en/download/](https://nodejs.org/en/download/)
+or manually
 
-Then verify:
+conda activate eqscribe
+pip install -r requirements.txt
 
-```bash
-node --version
-npm --version
-```
+# temporary for current session
+$env:PAPERS_ROOT = "C:\[BASEDIR]\papers"
+$env:PROFILES_ROOT = "C:\[BASEDIR]\paper_profiles"
 
----
+To make permanent on Windows
 
-# 🖥️ Backend Setup (FastAPI)
+setx PAPERS_ROOT "C:\[BASEDIR]\papers"
+setx PROFILES_ROOT "C:\[BASEDIR]\paper_profiles"
 
-## Step 1 — Navigate to backend folder
+Backend (FastAPI)
 
-```bash
+From repo root (equation_scribe_web), ensure dependencies installed:
+
+conda activate eqscribe
+pip install -r requirements.txt
+
+2) Start the backend:
+
 cd C:\Data\repos\equation_scribe_web
-```
-
-## Step 2 — Install dependencies
-
-Inside your `eqscribe` conda env:
-
-```bash
-pip install fastapi uvicorn pydantic pymupdf pillow python-multipart
-```
-
-## Step 3 — Run backend server
-
-```bash
 uvicorn backend.main:app --reload --port 8000 --reload-dir backend
-```
 
-If successful, you'll see:
+Backend endpoints of interest:
 
-```
-Uvicorn running on http://127.0.0.1:8000
-```
+GET /papers/index — profiles index JSON.
 
-Backend now provides:
+GET /papers/find_by_pdf?basename=<name> — find a profile by PDF basename.
 
-* `/papers/...` → PDF rendering, metadata
-* `/validate` → LaTeX → SymPy validation
-* `/papers/.../equations` → JSONL persistence
+GET /papers/{paper_id}/equations — list equations for a paper.
 
----
+POST /papers/{paper_id}/equations — append a new equation.
 
-# 🖥️ Frontend Setup (React + PDF.js + Konva)
+PUT /papers/{paper_id}/equations/{eq_uid} — update an equation record.
 
-## Step 1 — Navigate to frontend
+DELETE /papers/{paper_id}/equations/{eq_uid} — delete an equation.
 
-```bash
-cd C:\Data\repos\equation_scribe_web\frontend
-```
+GET /papers/{paper_id}/page/{idx}/image and /meta — page image and metadata.
 
-## Step 2 — Install dependencies
+POST /validate — validate LaTeX with SymPy.
 
-```bash
+CORS: The backend allows the default dev origin (http://127.0.0.1:5173). If your frontend runs elsewhere, update CORS settings in backend/main.py.
+
+Notes:
+
+If you see ModuleNotFoundError: No module named 'backend', run uvicorn from the repo root (as shown).
+
+For LaTeX parsing, SymPy requires antlr4-python3-runtime==4.11 (install if you see ANTLR errors).
+
+Frontend (React + Vite + Konva)
+
+Install and run:
+
+cd frontend
 npm install
-```
-
-## Step 3 — Run development server
-
-```bash
 npm run dev
-```
+Vite will show a local URL (commonly http://127.0.0.1:5173). Open in the browser.
 
-You should see:
+If you see Cannot find @vitejs/plugin-react, run:
 
-```
-VITE v5.x ready
-Local: http://127.0.0.1:5173/
-```
-
-Open a browser and go to:
-
-👉 **[http://127.0.0.1:5173](http://127.0.0.1:5173)**
-
----
-
-# 🎯 How to Use the UI
-
-1. Enter the **path to a PDF**, e.g.:
-
-   ```
-   C:\Data\repos\equation_scribe\data\Research_on_SAR_Imaging.pdf
-   ```
-
-2. Scroll pages using the left panel.
-
-3. Use the mouse to:
-
-   * **Draw** a bounding box
-   * **Select** a box
-   * **Drag** to move
-   * **Grab corners** to resize
-
-4. Enter the **LaTeX** for that equation.
-
-5. Click **Validate** to run SymPy parsing.
-
-6. Click **Save** to append a record to:
-
-   ```
-   paper_profiles/<paper-name>/equations.jsonl
-   ```
-
-Each line of the JSONL contains:
-
-```json
-{
-  "page": 3,
-  "bbox_pdf": [x0, y0, x1, y1],
-  "latex": "\\nabla \\cdot E = \\rho/\\epsilon_0",
-  "hash": "sha256..."
-}
-```
-
-This is stable across spirals and supports dataset creation.
-
----
-
-# 🔧 Troubleshooting
-
-### ❗ Backend: `ModuleNotFoundError: No module named 'backend'`
-
-Run `uvicorn` from the `equation_scribe_web` **root directory**:
-
-```bash
-cd C:\Data\repos\equation_scribe_web
-uvicorn backend.main:app --reload --port 8000 --reload-dir backend
-```
-
-### ❗ Frontend: `Cannot find @vitejs/plugin-react`
-
-Install:
-
-```bash
+powershell
+Copy code
 cd frontend
 npm install @vitejs/plugin-react --save-dev
-```
+Windows note: fsevents warnings are normal and can be ignored.
 
-### ❗ Frontend: `fsevents` missing
+Autodetector CLI (equation_scribe repo)
+The heuristic autodetector and profile registration are in the equation_scribe project (separate repo). Example usage:
 
-Windows doesn't support `fsevents`. This is normal and harmless.
+powershell
+Copy code
+# in equation_scribe repo
+conda activate eqscribe
+python -m equation_scribe.autodetect_equations `
+  --pdf "C:\[BASEDIR]\papers\MyPaper.pdf" `
+  --paper-id "MyPaper" `
+  --data-root "C:\[BASEDIR]\paper_profiles" `
+  --min-score 0.6 --force
+This writes PROFILES_ROOT/MyPaper/equations.jsonl and updates PROFILES_ROOT/index.json.
 
-### ❗ LaTeX validation failing with ANTLR errors
-
-Install compatible version:
-
-```bash
-pip install antlr4-python3-runtime==4.11
-```
-
----
-
-# 📦 Saving Outputs
-
-Annotated equations are saved here:
-
-```
-equation_scribe_web/paper_profiles/<paper-id>/equations.jsonl
-```
-
-You can load this when re-opening a paper in Spiral 2.
-
----
-
-# 🛠️ Development Notes
-
-### Why React + Konva?
-
-* Better mouse interactions (drag/resize/select)
-* Real GUI quality
-* Zooming and editing is smooth
-
-### Why store JSONL instead of a DB?
-
-* Line-append is cheap
-* Git-friendly
-* Easy to pipe into ML/RAG systems later
-* Perfect for iterative labeling
 
 ---
 

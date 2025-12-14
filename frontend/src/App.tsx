@@ -15,6 +15,8 @@ import {
 import type { Box, SavedBox, EquationRecord } from "./types";
 import "katex/dist/katex.min.css";
 import LaTeXPreview from "./components/LaTeXPreview";
+import { AutoDetectButton } from "./components/AutoDetectButton";
+import { DetectionCandidate } from "./types";
 
 export default function App() {
   const [paperId, setPaperId] = useState<string | null>(null);
@@ -163,6 +165,33 @@ async function autoLoadProfileForPdf(pdfPath: string) {
   }
 }
   
+// --- New Handler for Auto-Detect ---
+const handleAutoDetect = (candidates: DetectionCandidate[]) => {
+  if (!paperId) return;
+
+  // Convert API candidates to EquationRecord format
+  const newEquations: EquationRecord[] = candidates.map((cand) => ({
+    eq_uid: crypto.randomUUID().slice(0, 16), // Match your existing ID style
+    paper_id: paperId,
+    latex: cand.latex,
+    notes: `Auto-detected (Score: ${cand.score})`,
+    boxes: [
+      {
+        page: pageIndex,
+        bbox_pdf: cand.bbox_pdf,
+      },
+    ],
+  }));
+
+  // Update state: Add to equations AND rebuild the visual boxes
+  const updatedEqs = [...equations, ...newEquations];
+  setEquations(updatedEqs);
+  setSavedBoxes(buildSavedBoxesFromEquations(updatedEqs));
+  
+  setStatus(`✨ Added ${newEquations.length} auto-detected equations.`);
+};
+// -----------------------------------
+
   async function onValidate() {
     const r = await validateLatex(latex);
     setStatus(r.ok ? "✅ OK" : `❌ ${r.errors?.join("; ") || ""}`);
@@ -439,6 +468,17 @@ async function onSave() {
           <span>Zoom {zoom.toFixed(2)}x</span>
           <button disabled={!hasPdf} onClick={() => setZoom((z) => z + 0.25)}>+</button>
         </div>
+
+        {/* NEW: Auto-Detect Button */}
+        {hasPdf && (
+          <div style={{ marginBottom: 8, textAlign: "center" }}>
+            <AutoDetectButton 
+              paperId={paperId} 
+              pageIndex={pageIndex} 
+              onCandidatesFound={handleAutoDetect} 
+            />
+          </div>
+        )}
 
         <div style={{ border: "1px solid #eee", padding: 8 }}>
           <h3 style={{ marginTop: 0 }}>Equation Editor</h3>
