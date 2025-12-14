@@ -89,3 +89,19 @@ export async function findProfileByPdf(basename: string) {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
+export async function autodetectPage(paperId: string, pageIndex: number): Promise<DetectionCandidate[]> {
+  const url = `${API}/papers/${paperId}/autodetect_page`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page_index: pageIndex }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Auto-detect failed: ${res.statusText}`);
+  }
+
+  const data: AutoDetectResponse = await res.json();
+  return data.candidates;
+}

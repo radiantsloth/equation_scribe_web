@@ -1,9 +1,22 @@
 from pathlib import Path
 from typing import List, Dict, Any
 import json
+import shutil
+from datetime import datetime
 
 from .schemas import EquationRecord
 
+def _maybe_backup_profile_file(profile_dir: Path, fname: str = "equations.jsonl"):
+    src = profile_dir / fname
+    if not src.exists():
+        return None
+    history_dir = profile_dir / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    dst = history_dir / f"{fname}.bak.{ts}"
+    # copy file preserving metadata
+    shutil.copy2(src, dst)
+    return dst
 
 def equations_path(root: Path, paper_id: str) -> Path:
     d = root / paper_id
@@ -49,6 +62,9 @@ def update_equation(root: Path, paper_id: str, eq_uid: str, new_record: Dict[str
     If no matching eq_uid is found, append the new_record.
     """
     p = equations_path(root, paper_id)
+    # backup current state before rewrite
+    paper_dir = p.parent
+    _maybe_backup_profile_file(paper_dir)
     if not p.exists():
         # Just append if file doesn't exist yet
         with p.open("a", encoding="utf-8") as f:
@@ -85,6 +101,9 @@ def delete_equation(root: Path, paper_id: str, eq_uid: str) -> bool:
     Returns True if an equation was removed, False if not found.
     """
     p = equations_path(root, paper_id)
+    # backup current state before delete
+    paper_dir = p.parent
+    _maybe_backup_profile_file(paper_dir)
     if not p.exists():
         return False
 
