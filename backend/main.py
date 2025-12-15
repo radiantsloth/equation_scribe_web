@@ -17,7 +17,11 @@ from .services.validate import validate_latex
 
 from equation_scribe.recognition.inference import image_to_latex
 from equation_scribe.pdf_ingest import load_pdf, page_image, page_layout, page_size_points, pdf_to_px_transform
+from equation_scribe.detector.inference import detect_image #  YOLO inference script
 from equation_scribe.detect import find_equation_candidates
+import uuid # For generating UIDs
+
+YOLO_MODEL_PATH = Path("models/best.pt") 
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -272,3 +276,98 @@ def rescan_box(paper_id: str, payload: RescanRequest):
     latex_result = image_to_latex(crop_img)
     
     return {"latex": latex_result}
+
+
+
+@app.post("/papers/{paper_id}/autodetect_all")
+def autodetect_all(paper_id: str):
+    """
+    Run detection on ALL pages of the PDF.
+    Persist results immediately to storage.
+    """
+    # 1. Load PDF
+    try:
+        pdf_path = pdf_path_for(paper_id)
+    except NameError:
+        pdf_path = PAPERS_ROOT / f"{paper_id}.pdf"
+    
+    doc = load_pdf(pdf_path)
+    
+    detected_count = 0
+    
+    # 2. Iterate Pages
+    for page_ix in range(doc.num_pages):
+        # --- A. DETECTION PHASE ---
+        candidates = []
+        
+        # Option 1: Try YOLO if model exists
+        if YOLO_MODEL_PATH.exists():
+            # We need to render the page to an image for YOLO
+            # 150 DPI is usually a good balance for detection speed
+            img_path = PAPERS_ROOT / f"temp_{paper_id}_{page_ix}.png"
+            page_img = page_image(doc, page_ix, dpi=150)
+            page_img.save(img_path)
+            
+            try:
+                # Run your existing inference.py logic
+                yolo_boxes = detect_image(str(YOLO_MODEL_PATH), str(img_path), conf_thresh=0.25)
+                
+                # Convert Pixels -> PDF Coords
+                pdf2px, px2pdf = pdf_to_px_transform(doc, page_ix, dpi=150)
+                
+                for box in yolo_boxes:
+                    # box['xyxy'] is [x1, y1, x2, y2] in pixels
+                    px_coords = box['xyxy']
+                    
+                    # Map back to PDF points using your FIXED transform
+                    x0, y0 = px2pdf(px_coords[0], px_coords[1])
+                    x1, y1 = px2pdf(px_coords[2], px_coords[3])
+                    
+                    candidates.append({
+                        "bbox_pdf": (min(x0,x1), min(y0,y1), max(x0,x1), max(y0,y1)),
+                        "score": box['conf']
+                    })
+            finally:
+                # Cleanup temp image
+                if img_path.exists():
+                    img_path.unlink()
+                    
+        # Option 2: Fallback to Heuristics (Spiral 1 logic)
+        if not candidates:
+            from equation_scribe.detect import find_equation_candidates
+            spans = page_layout(doc, page_ix)
+            width, _ = page_size_points(doc, page_ix)
+            candidates = find_equation_candidates(spans, width)
+
+        # --- B. RECOGNITION & SAVE PHASE ---
+        if candidates:
+            # Prepare image once for cropping
+            full_page_img = page_image(doc, page_ix, dpi=150)
+            pdf2px, _ = pdf_to_px_transform(doc, page_ix, dpi=150)
+            
+            for cand in candidates:
+                # Crop
+                x0, y0, x1, y1 = cand["bbox_pdf"]
+                px0, py0 = pdf2px(x0, y0)
+                px1, py1 = pdf2px(x1, y1)
+                crop_box = (min(px0, px1), min(py0, py1), max(px0, px1), max(py0, py1))
+                crop_img = full_page_img.crop(crop_box)
+                
+                # Recognize
+                latex = image_to_latex(crop_img)
+                
+                # Persist immediately
+                rec = EquationRecord(
+                    eq_uid=str(uuid.uuid4())[:16],
+                    paper_id=paper_id,
+                    latex=latex,
+                    notes=f"Auto-detected (Page {page_ix+1})",
+                    boxes=[{
+                        "page": page_ix,
+                        "bbox_pdf": cand["bbox_pdf"]
+                    }]
+                )
+                append_equation(PROFILES_ROOT, rec)
+                detected_count += 1
+
+    return {"message": f"Scanned {doc.num_pages} pages", "equations_found": detected_count}
