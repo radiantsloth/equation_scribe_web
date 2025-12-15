@@ -1,26 +1,25 @@
 import React, { useState } from "react";
-import { autodetectPage } from "../api/client";
-import { DetectionCandidate } from "../types";
+import { autodetectAll } from "../api/client";
 
 interface Props {
   paperId: string;
-  pageIndex: number;
-  onCandidatesFound: (candidates: DetectionCandidate[]) => void;
+  onScanComplete: () => void; // Changed from onCandidatesFound
 }
 
-export const AutoDetectButton: React.FC<Props> = ({ paperId, pageIndex, onCandidatesFound }) => {
+export const AutoDetectButton: React.FC<Props> = ({ paperId, onScanComplete }) => {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
 
   const handleClick = async () => {
     setLoading(true);
-    setError(null);
+    setStatus("Scanning full paper... (this may take a while)");
     try {
-      const candidates = await autodetectPage(paperId, pageIndex);
-      onCandidatesFound(candidates);
-    } catch (err) {
+      const res = await autodetectAll(paperId);
+      setStatus(`Done! Found ${res.equations_found} equations.`);
+      onScanComplete(); // Trigger reload in parent
+    } catch (err: any) {
       console.error(err);
-      setError("Detection failed");
+      setStatus("Scan failed.");
     } finally {
       setLoading(false);
     }
@@ -31,11 +30,18 @@ export const AutoDetectButton: React.FC<Props> = ({ paperId, pageIndex, onCandid
       <button 
         onClick={handleClick} 
         disabled={loading}
-        style={{ backgroundColor: loading ? "#ccc" : "#007bff", color: "white", padding: "8px 16px", border: "none", borderRadius: "4px", cursor: "pointer" }}
+        style={{ 
+          backgroundColor: loading ? "#ccc" : "#28a745", // Green for "Go"
+          color: "white", 
+          padding: "8px 16px", 
+          border: "none", 
+          borderRadius: "4px", 
+          cursor: "pointer" 
+        }}
       >
-        {loading ? "Scanning..." : "✨ Auto-Detect Equations"}
+        {loading ? "Scanning..." : "🚀 Scan Entire Paper"}
       </button>
-      {error && <span style={{ color: "red", marginLeft: "8px", fontSize: "0.8em" }}>{error}</span>}
+      {status && <div style={{ marginTop: 4, fontSize: "0.8em", color: "#666" }}>{status}</div>}
     </div>
   );
 };

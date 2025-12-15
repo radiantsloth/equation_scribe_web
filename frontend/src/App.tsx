@@ -166,31 +166,23 @@ async function autoLoadProfileForPdf(pdfPath: string) {
   }
 }
   
-// --- New Handler for Auto-Detect ---
-const handleAutoDetect = (candidates: DetectionCandidate[]) => {
-  if (!paperId) return;
-
-  // Convert API candidates to EquationRecord format
-  const newEquations: EquationRecord[] = candidates.map((cand) => ({
-    eq_uid: crypto.randomUUID().slice(0, 16), // Match your existing ID style
-    paper_id: paperId,
-    latex: cand.latex,
-    notes: `Auto-detected (Score: ${cand.score})`,
-    boxes: [
-      {
-        page: pageIndex,
-        bbox_pdf: cand.bbox_pdf,
-      },
-    ],
-  }));
-
-  // Update state: Add to equations AND rebuild the visual boxes
-  const updatedEqs = [...equations, ...newEquations];
-  setEquations(updatedEqs);
-  setSavedBoxes(buildSavedBoxesFromEquations(updatedEqs));
-  
-  setStatus(`✨ Added ${newEquations.length} auto-detected equations.`);
-};
+// --- New Handler for Full Scan ---
+  const handleScanComplete = async () => {
+    if (!paperId) return;
+    
+    // Simply reload all data from the backend
+    // The backend has already saved the new equations
+    try {
+      const saved = await listEquations(paperId);
+      const eqs: EquationRecord[] = saved.items || [];
+      setEquations(eqs);
+      setSavedBoxes(buildSavedBoxesFromEquations(eqs));
+      setStatus("✅ Paper scan complete. Data reloaded.");
+    } catch (e) {
+      console.error(e);
+      setStatus("❌ Error reloading data after scan.");
+    }
+  };
 // -----------------------------------
 
   async function onValidate() {
@@ -452,9 +444,30 @@ async function onSave() {
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", padding: 12, gap: 12 }}>
-      {/* LEFT: PDF viewport */}
-      <div style={{ flex: "0 0 70%", maxWidth: "70%", minWidth: 600, borderRight: "1px solid #ddd", display: "flex", justifyContent: "center", alignItems: "center", background: "#f5f5f5", overflow: "auto" }}>
-        <div style={{ display: "inline-block", position: "relative" }}>
+{/* LEFT: PDF viewport */}
+      <div 
+        style={{ 
+          flex: "0 0 70%", 
+          maxWidth: "70%", 
+          minWidth: 600, 
+          borderRight: "1px solid #ddd", 
+          display: "flex", 
+          // REMOVED: justifyContent: "center", alignItems: "center"
+          // We remove these to prevent clipping the top/left when zoomed in.
+          background: "#f5f5f5", 
+          overflow: "auto" 
+        }}
+      >
+        <div 
+          style={{ 
+            // ADDED: margin: "auto"
+            // This magically centers the element in a flex container if there's space,
+            // but allows normal top-left alignment if it overflows (enabling scrolling).
+            margin: "auto", 
+            position: "relative" 
+            // REMOVED: display: "inline-block" (not strictly necessary with flex child, but harmless if kept)
+          }}
+        >
           {hasPdf && (
             <PdfImage paperId={paperId!} pageIndex={pageIndex} zoom={zoom} onImageReady={handleImageReady} />
           )}
@@ -469,7 +482,6 @@ async function onSave() {
             onSelectSaved={handleSelectSaved}
             onSavedBoxChange={handleSavedBoxChange}
             onDeleteSaved={(boxId: string) => {
-              // Select the saved box, then call the central delete handler
               setSelectedBoxId(boxId);
               handleDeleteSavedBox();
             }}
@@ -501,8 +513,7 @@ async function onSave() {
           <div style={{ marginBottom: 8, textAlign: "center" }}>
             <AutoDetectButton 
               paperId={paperId} 
-              pageIndex={pageIndex} 
-              onCandidatesFound={handleAutoDetect} 
+              onCandidatesFound={handleScanComplete} 
             />
           </div>
         )}

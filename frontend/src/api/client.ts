@@ -1,5 +1,8 @@
 const API = "http://127.0.0.1:8000";
 
+import { DetectionCandidate, AutoDetectResponse } from "../types";
+
+
 export async function uploadPdf(file: File): Promise<{ paper_id: string }> {
   const form = new FormData();
   form.append("file", file);
@@ -98,10 +101,31 @@ export async function autodetectPage(paperId: string, pageIndex: number): Promis
     body: JSON.stringify({ page_index: pageIndex }),
   });
 
-  if (!res.ok) {
-    throw new Error(`Auto-detect failed: ${res.statusText}`);
-  }
-
+  if (!res.ok) throw new Error(`Auto-detect failed: ${res.statusText}`);
+  
   const data: AutoDetectResponse = await res.json();
   return data.candidates;
+}
+
+export async function rescanBox(
+  paperId: string, 
+  pageIndex: number, 
+  bbox: [number, number, number, number]
+): Promise<{ latex: string }> {
+  const url = `${API}/papers/${paperId}/rescan_box`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page_index: pageIndex, bbox }),
+  });
+
+  if (!res.ok) throw new Error(`Rescan failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function autodetectAll(paperId: string): Promise<{ equations_found: number }> {
+  const url = `${API}/papers/${paperId}/autodetect_all`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) throw new Error(`Scan failed: ${res.statusText}`);
+  return res.json();
 }
