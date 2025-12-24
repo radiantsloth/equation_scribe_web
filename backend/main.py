@@ -226,12 +226,22 @@ def autodetect_all(paper_id: str):
     
     # 1. Load EXISTING equations to check for duplicates
     existing_items = read_equations(PROFILES_ROOT, paper_id)
+    
     # Map: page_index -> list of [x0, y0, x1, y1]
     existing_boxes = {}
+    total_equations_before = 0
+    
     if existing_items:
+        total_equations_before = len(existing_items)
         for eq in existing_items:
-            for b in eq.boxes:
-                existing_boxes.setdefault(b.page, []).append(b.bbox_pdf)
+            # FIX: Use dict access (.get) instead of attribute access
+            boxes = eq.get("boxes", [])
+            for b in boxes:
+                # FIX: 'b' is a dict
+                page = b.get("page")
+                bbox = b.get("bbox_pdf")
+                if page is not None and bbox:
+                    existing_boxes.setdefault(page, []).append(bbox)
 
     for page_ix in range(doc.num_pages):
         candidates = []
@@ -314,4 +324,9 @@ def autodetect_all(paper_id: str):
                 page_existing.append(cand_box)
                 detected_count += 1
 
-    return {"message": f"Scanned {doc.num_pages} pages", "equations_found": detected_count}
+    total_after = total_equations_before + detected_count
+    return {
+        "message": f"Scanned {doc.num_pages} pages", 
+        "equations_found": detected_count,
+        "total_equations": total_after
+    }
