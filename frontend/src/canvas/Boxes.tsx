@@ -8,18 +8,12 @@ type Props = {
   image: HTMLImageElement | null;
   pagePx: { width: number; height: number };
   pdfDims: { widthPts: number; heightPts: number };
-  savedBoxes: SavedBox[];      // saved boxes WITH eq_uid + box_idx + id
+  savedBoxes: SavedBox[];
   currentBoxes: Box[];
   setCurrentBoxes: (b: Box[]) => void;
-
-  
-  // Generic handler to tell App.tsx "This ID is now selected"
-  onSelectBox?: (boxId: string | null) => void;
-
   onSelectSaved?: (eq_uid: string, boxId: string) => void;
-  
+  onSelectBox?: (boxId: string | null) => void;
   onDeleteSaved?: (boxId: string) => void;
-
   onSavedBoxChange?: (boxId: string, newBox: Box) => void;
 };
 
@@ -40,7 +34,6 @@ export default function Boxes({
   const trRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
 
-  // PDF points <-> pixel transforms
   const scaleX = pagePx.width / (pdfDims.widthPts || 1);
   const scaleY = pagePx.height / (pdfDims.heightPts || 1);
   const pdfToPx = (x:number,y:number)=>({ x: x*scaleX, y: y*scaleY });
@@ -80,18 +73,84 @@ export default function Boxes({
     tr.getLayer()?.batchDraw();
   }, [selectedId, currentRects, savedRects]);
 
-  // Rubber-band draw
+  // Rubber-band draw state
   const [dragStart, setDragStart] = useState<{x:number;y:number}|null>(null);
   const [dragRect, setDragRect] = useState<{x:number;y:number;w:number;h:number}|null>(null);
 
+  // --- NEW: Unified Selection Handler with Cycling ---
+  function handleStageClick(e: any) {
+    // 1. Ignore if clicking on Transformer
+    if (e.target.getParent()?.className === 'Transformer') {
+      return;
+    }
+    
+    // 2. Ignore if we just finished drawing a box
+    if (dragRect) return;
+
+    // 3. Get click position in PDF coordinates
+    const stage = e.target.getStage();
+    const pos = stage.getPointerPosition();
+    if (!pos) return;
+    const clickPdf = pxToPdf(pos.x, pos.y);
+
+    // 4. Find ALL intersecting boxes (Saved + Current)
+    // A point (cx, cy) is inside [x0, y0, x1, y1] if x0 <= cx <= x1 AND y0 <= cy <= y1
+    const cx = clickPdf.x;
+    const cy = clickPdf.y;
+
+    const hitSaved = savedRects.filter(r => {
+        const [x0,y0,x1,y1] = r.bbox_pdf;
+        return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+    }).map(r => ({ id: r.id, type: 'saved', uid: r.eq_uid }));
+
+    const hitCurrent = currentRects.filter(r => {
+        const [x0,y0,x1,y1] = r.bbox_pdf;
+        return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+    }).map(r => ({ id: r.id, type: 'current', uid: null }));
+
+    const allHits = [...hitSaved, ...hitCurrent];
+
+    if (allHits.length === 0) {
+        // Deselect
+        setSelectedId(null);
+        if (onSelectBox) onSelectBox(null);
+        return;
+    }
+
+    // 5. Cycling Logic
+    let nextId = allHits[0].id;
+    
+    // If we are currently selected on one of the hits, pick the NEXT one
+    if (selectedId) {
+        const currentIndex = allHits.findIndex(h => h.id === selectedId);
+        if (currentIndex !== -1) {
+            const nextIndex = (currentIndex + 1) % allHits.length;
+            nextId = allHits[nextIndex].id;
+        }
+    }
+
+    const hit = allHits.find(h => h.id === nextId)!;
+    
+    // Perform Selection
+    setSelectedId(hit.id);
+    if (onSelectBox) onSelectBox(hit.id);
+    if (hit.type === 'saved' && onSelectSaved) {
+        onSelectSaved(hit.uid!, hit.id);
+    }
+  }
+
   function onMouseDown(e:any){
-    if (e.target?.name() !== "bg") return;
+    // Only start drag if clicking on background (not on an existing box/transformer)
+    // But we still want to allow selection cycling on existing boxes.
+    // So we assume onMouseDown is for DRAWING new boxes unless we clicked a box?
+    // Actually, simpler: Start drag always, but only "draw" if we moved.
+    if (e.target.name() !== "bg") return;
+    
     const pos = e.target.getStage().getPointerPosition();
     if (!pos) return;
     setDragStart(pos);
-    setSelectedId(null);
-    if (onSelectBox) onSelectBox(null); // Notify parent: Deselect
   }
+
   function onMouseMove(e:any){
     if (!dragStart) return;
     const pos = e.target.getStage().getPointerPosition();
@@ -103,7 +162,9 @@ export default function Boxes({
       h: Math.abs(pos.y - dragStart.y),
     });
   }
-  function onMouseUp(){
+
+  function onMouseUp(e: any){
+    // If we dragged a reasonable amount, create a new box
     if (dragRect && dragRect.w > 4 && dragRect.h > 4){
       const p0 = pxToPdf(dragRect.x, dragRect.y);
       const p1 = pxToPdf(dragRect.x + dragRect.w, dragRect.y + dragRect.h);
@@ -114,13 +175,14 @@ export default function Boxes({
       const nb:Box = { page: pageIndex, bbox_pdf: bbox, id: `cur-${Date.now()}` };
       setCurrentBoxes([...currentBoxes, nb]);
       setSelectedId(nb.id!);
-      // Auto-select the NEW box locally AND in parent
-      if (onSelectBox) onSelectBox(nb.id!);
+      if (onSelectBox) onSelectBox(nb.id!); 
     }
+    
     setDragStart(null);
     setDragRect(null);
   }
 
+  // ... [Keep nodeToPdfBBox and transform/drag handlers] ...
   function onSavedDragEnd(savedId: string, e:any){
     const node = e.target;
     const {x,y,width,height,scaleX: sx, scaleY: sy} = node.attrs;
@@ -128,21 +190,19 @@ export default function Boxes({
     const p0 = pxToPdf(x, y);
     const p1 = pxToPdf(x + w, y + h);
     const bbox:[number,number,number,number] = [
-      Math.min(p0.x, p1.x), Math.min(p0.y, p1.y),
-      Math.max(p0.x, p1.x), Math.max(p0.y, p1.y),
+        Math.min(p0.x, p1.x), Math.min(p0.y, p1.y),
+        Math.max(p0.x, p1.x), Math.max(p0.y, p1.y),
     ];
     if (onSavedBoxChange) onSavedBoxChange(savedId, { page: pageIndex, bbox_pdf: bbox, id: savedId });
   }
 
   function nodeToPdfBBox(node:any) {
-    // node: Konva node after transform
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
     const x = node.x();
     const y = node.y();
     const width = node.width() * scaleX;
     const height = node.height() * scaleY;
-    // Reset scale for future transforms
     node.scaleX(1);
     node.scaleY(1);
     const p0 = pxToPdf(x, y);
@@ -177,15 +237,14 @@ export default function Boxes({
 
   function deleteSelected(){
     if (!selectedId) return;
-    // If selected is a saved box, delegate to parent handler
     if (selectedId.startsWith("saved-")) {
       if (onDeleteSaved) onDeleteSaved(selectedId);
       setSelectedId(null);
       return;
     }
-    // Otherwise delete from current boxes
     setCurrentBoxes(currentBoxes.filter(b => b.id !== selectedId));
     setSelectedId(null);
+    if (onSelectBox) onSelectBox(null);
   }
 
   return (
@@ -195,6 +254,8 @@ export default function Boxes({
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
+      onClick={handleStageClick} // <--- Unified Click Handler
+      onTap={handleStageClick}
       tabIndex={0}
       onKeyDown={(e:any)=>{ if (e.key === "Delete") deleteSelected(); }}
       style={{border: "1px solid #ddd"}}
@@ -216,14 +277,7 @@ export default function Boxes({
               dash={isSelected ? undefined : [4,4]}
               fill={isSelected ? "rgba(255,0,0,0.06)" : undefined}
               draggable={isSelected}
-              onClick={()=>{
-                setSelectedId(r.id);
-                if (onSelectSaved) onSelectSaved(r.eq_uid, r.id);
-              }}
-              onTap={()=>{
-                setSelectedId(r.id);
-                if (onSelectSaved) onSelectSaved(r.eq_uid, r.id);
-              }}
+              // REMOVED onClick/onTap from Rect (handled by Stage)
               onDragEnd={(e)=>onSavedDragEnd(r.id, e)}
               onTransformEnd={(e)=>onSavedTransformEnd(r.id, e)}
             />
@@ -233,8 +287,7 @@ export default function Boxes({
         {currentRects.map(r => (
           <Rect key={r.id} id={r.id} x={r.x} y={r.y} width={r.w} height={r.h}
                 stroke="red" fill="rgba(255,0,0,0.06)" draggable
-                onClick={()=>setSelectedId(r.id!)}
-                onTap={()=>setSelectedId(r.id!)}
+                // REMOVED onClick/onTap from Rect (handled by Stage)
                 onDragMove={(e)=>onRectDragMove(r.id!, e)}
                 onTransformEnd={(e)=>onRectTransformEnd(r.id!, e)}
           />
@@ -243,16 +296,7 @@ export default function Boxes({
         <Transformer
           ref={trRef}
           rotateEnabled={false}
-          enabledAnchors={[
-            "top-left",
-            "top-center",
-            "top-right",
-            "middle-left",
-            "middle-right",
-            "bottom-left",
-            "bottom-center",
-            "bottom-right",
-          ]}
+          enabledAnchors={["top-left", "top-center", "top-right", "middle-left", "middle-right", "bottom-left", "bottom-center", "bottom-right"]}
         />
         {dragRect && (
           <Rect x={dragRect.x} y={dragRect.y} width={dragRect.w} height={dragRect.h}
