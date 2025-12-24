@@ -37,15 +37,15 @@ export default function App() {
   const [notes, setNotes] = useState("");
   const hasPdf = !!paperId && pages > 0;
 
-  // --- NEW: Helper to load state for a given paperId ---
+  // --- HELPER: Centralized State Loader ---
   const loadPaperData = async (pid: string) => {
     try {
-      // 1. Load Equations
+      // 1. Load Equations from Backend
       const saved = await listEquations(pid);
       const eqs: EquationRecord[] = saved.items || [];
       setEquations(eqs);
 
-      // 2. Build Boxes
+      // 2. Rebuild Saved Boxes for Canvas
       const sBoxes: SavedBox[] = [];
       for (const eq of eqs) {
         eq.boxes.forEach((b, idx) => {
@@ -59,6 +59,8 @@ export default function App() {
         });
       }
       setSavedBoxes(sBoxes);
+      
+      // 3. Clear working state (Red boxes) now that Gray boxes are loaded
       setCurrentBoxes([]);
       return true;
     } catch (err: any) {
@@ -81,7 +83,7 @@ export default function App() {
       setPages(pages);
       setPageIndex(0);
       
-      // Load saved state (Correcting "Start Over" issue)
+      // Load saved state immediately
       const success = await loadPaperData(paper_id);
       
       if (success) {
@@ -90,6 +92,7 @@ export default function App() {
         setStatus(`Loaded "${file.name}" (${pages} pages).`);
       }
       
+      // Reset Editor
       setSelectedEqUid(null);
       setSelectedBoxId(null);
       setLatex("");
@@ -118,6 +121,7 @@ export default function App() {
     setStatus(r.ok ? "✅ OK" : `❌ ${r.errors?.join("; ") || ""}`);
   }
 
+  // --- SAVE HANDLER (Unified) ---
   async function onSave() {
     if (!paperId) {
       setStatus("❌ No PDF loaded.");
@@ -125,7 +129,7 @@ export default function App() {
     }
     try {
       if (selectedEqUid) {
-        // Update existing
+        // UPDATE EXISTING
         const existing = equations.find((e) => e.eq_uid === selectedEqUid);
         if (existing) {
           const updated: EquationRecord = {
@@ -133,13 +137,14 @@ export default function App() {
             paper_id: paperId,
             latex: latex,
             notes: notes,
+            // Keep existing boxes (coordinates might have changed via drag)
             boxes: existing.boxes.map((b) => ({ page: b.page, bbox_pdf: b.bbox_pdf })),
           };
           await updateEquation(paperId, existing.eq_uid, updated);
           setStatus("✅ Updated existing equation.");
         }
       } else {
-        // Create New
+        // CREATE NEW
         if (currentBoxes.length === 0) {
           setStatus("❌ Add at least one box.");
           return;
@@ -154,7 +159,10 @@ export default function App() {
         await saveEquation(paperId, rec);
         setStatus(`✅ Saved ${currentBoxes.length} box(es).`);
       }
-      await loadPaperData(paperId); // Refresh state
+      
+      // CRITICAL: Reload state from backend to confirm save and show gray box
+      await loadPaperData(paperId);
+      
     } catch (err: any) {
       console.error(err);
       setStatus(`❌ Error saving: ${err.message}`);
@@ -172,9 +180,11 @@ export default function App() {
   }
 
   function handleSavedBoxChange(boxId: string, newBox: Box) {
+    // Optimistic UI update for dragging Saved Boxes
     setSavedBoxes((prev) =>
       prev.map((sb) => (sb.id === boxId ? { ...sb, bbox_pdf: newBox.bbox_pdf } : sb))
     );
+    // Sync to 'equations' state so Save picks it up
     setEquations((prev) =>
       prev.map((eq) => {
         const updated = { ...eq };
@@ -206,9 +216,14 @@ export default function App() {
         await updateEquation(paperId, eq_uid, updated);
         setStatus("✅ Deleted box.");
       }
+      
+      // CRITICAL: Reload state to reflect deletion
       await loadPaperData(paperId);
+      
       setSelectedBoxId(null);
       setSelectedEqUid(null);
+      setLatex("");
+      setNotes("");
     } catch (err: any) {
       setStatus(`❌ Delete error: ${err.message}`);
     }
@@ -216,6 +231,7 @@ export default function App() {
 
   async function handleRescanSelected() {
     if (!paperId || !selectedBoxId) return;
+    // Check saved boxes first, then current boxes
     let box: Box | undefined = savedBoxes.find((s) => s.id === selectedBoxId);
     if (!box) box = currentBoxes.find((c) => c.id === selectedBoxId);
     
@@ -235,6 +251,7 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", padding: 12, gap: 12 }}>
+      {/* LEFT: PDF viewport */}
       <div style={{ flex: "0 0 70%", maxWidth: "70%", minWidth: 600, borderRight: "1px solid #ddd", display: "flex", background: "#f5f5f5", overflow: "auto" }}>
         <div style={{ margin: "auto", position: "relative" }}>
           {hasPdf && (
@@ -259,6 +276,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* RIGHT: sidebar / controls */}
       <div style={{ flex: "0 0 30%", maxWidth: "30%", minWidth: 360, display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" }}>
         <div style={{ marginBottom: 16 }}>
           <label>
