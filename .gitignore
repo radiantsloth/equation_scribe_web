@@ -22,3 +22,6 @@ Thumbs.db
 # Env files
 .env
 .env.local
+
+# Training data
+data/
