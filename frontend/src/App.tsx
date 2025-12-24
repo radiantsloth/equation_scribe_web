@@ -513,7 +513,7 @@ async function onSave() {
           <div style={{ marginBottom: 8, textAlign: "center" }}>
             <AutoDetectButton 
               paperId={paperId} 
-              onCandidatesFound={handleScanComplete} 
+              onScanComplete={handleScanComplete} 
             />
           </div>
         )}

@@ -11,9 +11,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .schemas import EquationRecord
-from .storage import read_equations, append_equation
+from .storage import read_equations, append_equation, update_equation, delete_equation
 from .services.pdf import page_count, render_page_png, page_meta
 from .services.validate import validate_latex
+from .adjudication import AdjudicationManager
 
 from equation_scribe.recognition.inference import image_to_latex
 from equation_scribe.pdf_ingest import load_pdf, page_image, page_layout, page_size_points, pdf_to_px_transform
@@ -21,15 +22,16 @@ from equation_scribe.detector.inference import detect_image #  YOLO inference sc
 from equation_scribe.detect import find_equation_candidates
 import uuid # For generating UIDs
 
-YOLO_MODEL_PATH = Path("models/best.pt") 
-
-
 APP_ROOT = Path(__file__).resolve().parents[1]
-PROFILES_ROOT = Path(os.getenv("PROFILES_ROOT"))
-PAPERS_ROOT = Path(os.getenv("PAPERS_ROOT"))
-# Ensure directories exist
+# Point to the model you just copied
+YOLO_MODEL_PATH = Path(__file__).parent / "models" / "best.pt" 
+PROFILES_ROOT = Path(os.getenv("PROFILES_ROOT", "data/profiles"))
+PAPERS_ROOT = Path(os.getenv("PAPERS_ROOT", "data/pdfs"))
+
 PROFILES_ROOT.mkdir(parents=True, exist_ok=True)
 PAPERS_ROOT.mkdir(parents=True, exist_ok=True)
+
+adjudicator = AdjudicationManager()
 
 app = FastAPI(title="Equation Scribe API (React + Konva)")
 
@@ -56,6 +58,9 @@ class AutoDetectRequest(BaseModel):
 class UploadResponse(BaseModel):
     paper_id: str
 
+class RescanRequest(BaseModel):
+    page_index: int
+    bbox: List[float]
 
 def slugify(name: str) -> str:
     stem = Path(name).stem
@@ -64,10 +69,11 @@ def slugify(name: str) -> str:
 
 
 def pdf_path_for(paper_id: str) -> Path:
+    # Try finding it in PAPERS_ROOT
     p = PAPERS_ROOT / f"{paper_id}.pdf"
-    if not p.exists():
-        raise HTTPException(404, f"PDF for paper_id '{paper_id}' not found")
-    return p
+    if p.exists(): return p
+    # Fallback search if needed
+    raise HTTPException(404, f"PDF for paper_id '{paper_id}' not found")
 
 # helper to load the index file from PROFILES_ROOT
 def load_profiles_index() -> dict:
@@ -149,11 +155,54 @@ def list_equations(paper_id: str) -> Dict[str, Any]:
 def save_equation(paper_id: str, rec: EquationRecord):
     if not rec.boxes:
         raise HTTPException(400, "At least one box is required")
-    if rec.paper_id != paper_id:
-        raise HTTPException(400, "paper_id mismatch")
     append_equation(PROFILES_ROOT, rec)
+    
+    # NEW: Save to Adjudication Dataset
+    try:
+        _adjudicate_record(paper_id, rec)
+    except Exception as e:
+        print(f"Adjudication error: {e}")
+        
     return {"ok": True}
 
+def _adjudicate_record(paper_id: str, rec: EquationRecord):
+    """Helper to crop and save to adjudication dataset."""
+    if not rec.boxes: return
+    
+    # Load PDF and Page
+    pdf_path = pdf_path_for(paper_id)
+    doc = load_pdf(pdf_path)
+    page_ix = rec.boxes[0].page
+    bbox_pdf = rec.boxes[0].bbox_pdf
+    
+    # Render page (150 DPI matches training)
+    full_page_img = page_image(doc, page_ix, dpi=150)
+    pdf2px, _ = pdf_to_px_transform(doc, page_ix, dpi=150)
+    
+    # Convert and Crop
+    x0, y0, x1, y1 = bbox_pdf
+    px0, py0 = pdf2px(x0, y0)
+    px1, py1 = pdf2px(x1, y1)
+    
+    # NEW: Add Padding (Important for quality data)
+    pad = 5
+    w, h = full_page_img.size
+    crop_box = (
+        max(0, min(px0, px1) - pad), 
+        max(0, min(py0, py1) - pad), 
+        min(w, max(px0, px1) + pad), 
+        min(h, max(py0, py1) + pad)
+    )
+    
+    crop_img = full_page_img.crop(crop_box)
+    
+    # Save to "Gold Standard"
+    adjudicator.save_correction(
+        image=crop_img,
+        latex=rec.latex,
+        source_file=f"{paper_id}.pdf",
+        bbox=bbox_pdf
+    )
 
 @app.post("/validate")
 def validate(payload: LatexPayload):
@@ -165,13 +214,14 @@ def canonical_hash(text: str) -> str:
 
 @app.put("/papers/{paper_id}/equations/{eq_uid}")
 def update_equation_endpoint(paper_id: str, eq_uid: str, rec: EquationRecord):
-    if rec.paper_id != paper_id:
-        raise HTTPException(400, "paper_id mismatch")
-    if rec.eq_uid != eq_uid:
-        raise HTTPException(400, "eq_uid mismatch")
-    # use storage.update_equation
-    from .storage import update_equation
-    update_equation(PROFILES_ROOT, paper_id, eq_uid, rec.model_dump() if hasattr(rec, "model_dump") else rec.dict())
+    update_equation(PROFILES_ROOT, paper_id, eq_uid, rec.model_dump())
+    
+    # NEW: Save to Adjudication Dataset
+    try:
+        _adjudicate_record(paper_id, rec)
+    except Exception as e:
+        print(f"Adjudication error: {e}")
+        
     return {"ok": True}
 
 @app.delete("/papers/{paper_id}/equations/{eq_uid}")
@@ -282,44 +332,28 @@ def rescan_box(paper_id: str, payload: RescanRequest):
 @app.post("/papers/{paper_id}/autodetect_all")
 def autodetect_all(paper_id: str):
     """
-    Run detection on ALL pages of the PDF.
-    Persist results immediately to storage.
+    Run detection on ALL pages using YOLO if available.
     """
-    # 1. Load PDF
-    try:
-        pdf_path = pdf_path_for(paper_id)
-    except NameError:
-        pdf_path = PAPERS_ROOT / f"{paper_id}.pdf"
-    
+    pdf_path = pdf_path_for(paper_id)
     doc = load_pdf(pdf_path)
-    
     detected_count = 0
     
-    # 2. Iterate Pages
     for page_ix in range(doc.num_pages):
-        # --- A. DETECTION PHASE ---
         candidates = []
         
-        # Option 1: Try YOLO if model exists
+        # 1. YOLO Detection
         if YOLO_MODEL_PATH.exists():
-            # We need to render the page to an image for YOLO
-            # 150 DPI is usually a good balance for detection speed
             img_path = PAPERS_ROOT / f"temp_{paper_id}_{page_ix}.png"
-            page_img = page_image(doc, page_ix, dpi=150)
+            page_img = page_image(doc, page_ix, dpi=150) 
             page_img.save(img_path)
             
             try:
-                # Run your existing inference.py logic
                 yolo_boxes = detect_image(str(YOLO_MODEL_PATH), str(img_path), conf_thresh=0.25)
                 
-                # Convert Pixels -> PDF Coords
                 pdf2px, px2pdf = pdf_to_px_transform(doc, page_ix, dpi=150)
                 
                 for box in yolo_boxes:
-                    # box['xyxy'] is [x1, y1, x2, y2] in pixels
                     px_coords = box['xyxy']
-                    
-                    # Map back to PDF points using your FIXED transform
                     x0, y0 = px2pdf(px_coords[0], px_coords[1])
                     x1, y1 = px2pdf(px_coords[2], px_coords[3])
                     
@@ -328,44 +362,37 @@ def autodetect_all(paper_id: str):
                         "score": box['conf']
                     })
             finally:
-                # Cleanup temp image
-                if img_path.exists():
-                    img_path.unlink()
-                    
-        # Option 2: Fallback to Heuristics (Spiral 1 logic)
-        if not candidates:
-            from equation_scribe.detect import find_equation_candidates
-            spans = page_layout(doc, page_ix)
-            width, _ = page_size_points(doc, page_ix)
-            candidates = find_equation_candidates(spans, width)
+                if img_path.exists(): img_path.unlink()
 
-        # --- B. RECOGNITION & SAVE PHASE ---
+        # 2. Recognition & Save
         if candidates:
-            # Prepare image once for cropping
             full_page_img = page_image(doc, page_ix, dpi=150)
             pdf2px, _ = pdf_to_px_transform(doc, page_ix, dpi=150)
             
             for cand in candidates:
-                # Crop
                 x0, y0, x1, y1 = cand["bbox_pdf"]
                 px0, py0 = pdf2px(x0, y0)
                 px1, py1 = pdf2px(x1, y1)
-                crop_box = (min(px0, px1), min(py0, py1), max(px0, px1), max(py0, py1))
-                crop_img = full_page_img.crop(crop_box)
                 
-                # Recognize
+                # --- NEW: Add 5px padding ---
+                pad = 5
+                w, h = full_page_img.size
+                crop_box = (
+                    max(0, min(px0, px1) - pad), 
+                    max(0, min(py0, py1) - pad), 
+                    min(w, max(px0, px1) + pad), 
+                    min(h, max(py0, py1) + pad)
+                )
+                
+                crop_img = full_page_img.crop(crop_box)
                 latex = image_to_latex(crop_img)
                 
-                # Persist immediately
                 rec = EquationRecord(
                     eq_uid=str(uuid.uuid4())[:16],
                     paper_id=paper_id,
                     latex=latex,
-                    notes=f"Auto-detected (Page {page_ix+1})",
-                    boxes=[{
-                        "page": page_ix,
-                        "bbox_pdf": cand["bbox_pdf"]
-                    }]
+                    notes=f"Auto (YOLO {cand['score']:.2f})",
+                    boxes=[{"page": page_ix, "bbox_pdf": cand["bbox_pdf"]}]
                 )
                 append_equation(PROFILES_ROOT, rec)
                 detected_count += 1
