@@ -17,7 +17,6 @@ import type { Box, SavedBox, EquationRecord } from "./types";
 import "katex/dist/katex.min.css";
 import LaTeXPreview from "./components/LaTeXPreview";
 import { AutoDetectButton } from "./components/AutoDetectButton";
-import { DetectionCandidate } from "./types";
 
 export default function App() {
   const [paperId, setPaperId] = useState<string | null>(null);
@@ -27,60 +26,26 @@ export default function App() {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [pagePx, setPagePx] = useState({ width: 800, height: 1100 });
   const [status, setStatus] = useState<string>("No PDF loaded");
+  const [pdfDims, setPdfDims] = useState<{ widthPts: number; heightPts: number }>({ widthPts: 0, heightPts: 0 });
 
-  const [pdfDims, setPdfDims] = useState<{ widthPts: number; heightPts: number }>({
-    widthPts: 0,
-    heightPts: 0,
-  });
-
-  // equations holds the full EquationRecord array returned by the backend
   const [equations, setEquations] = useState<EquationRecord[]>([]);
-
-  // Build savedBoxes from equations (each savedBox includes eq_uid and box_idx)
   const [savedBoxes, setSavedBoxes] = useState<SavedBox[]>([]);
   const [currentBoxes, setCurrentBoxes] = useState<Box[]>([]);
-
-  // selection state
   const [selectedEqUid, setSelectedEqUid] = useState<string | null>(null);
   const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
-
-  // Latex editor
   const [latex, setLatex] = useState("");
   const [notes, setNotes] = useState("");
-
   const hasPdf = !!paperId && pages > 0;
 
-  // Upload handler
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // --- HELPER: Centralized State Loader ---
+  const loadPaperData = async (pid: string) => {
     try {
-      setStatus(`Uploading "${file.name}"...`);
-      const { paper_id } = await uploadPdf(file);
-      setPaperId(paper_id);
-      setStatus(`Uploaded. Loading pages for "${file.name}"...`);
-
-      const { pages } = await getPageCount(paper_id);
-      setPages(pages);
-      setPageIndex(0);
-      setStatus(`Loaded ${pages} pages.`);
-
-      // clear state
-      setSavedBoxes([]);
-      setCurrentBoxes([]);
-      setEquations([]);
-      setSelectedEqUid(null);
-      setSelectedBoxId(null);
-      setLatex("");
-      setNotes("");
-
-      // fetch equations if any (some uploads may have none)
-      const saved = await listEquations(paper_id);
+      // 1. Load Equations from Backend
+      const saved = await listEquations(pid);
       const eqs: EquationRecord[] = saved.items || [];
       setEquations(eqs);
 
-      // flatten to SavedBox[]
+      // 2. Rebuild Saved Boxes for Canvas
       const sBoxes: SavedBox[] = [];
       for (const eq of eqs) {
         eq.boxes.forEach((b, idx) => {
@@ -94,204 +59,116 @@ export default function App() {
         });
       }
       setSavedBoxes(sBoxes);
+      
+      // 3. Clear working state (Red boxes) now that Gray boxes are loaded
+      setCurrentBoxes([]);
+      return true;
     } catch (err: any) {
       console.error(err);
-      setStatus(`Error uploading/loading PDF: ${err.message ?? String(err)}`);
+      setStatus(`Error loading paper data: ${err.message}`);
+      return false;
     }
   };
 
-  // function handleImageReady(image: HTMLImageElement, meta: any) {
-  //   setImg(image);
-  //   setPagePx({ width: meta.width_px, height: meta.height_px });
-  //   setPdfDims({ widthPts: meta.width_pts, heightPts: meta.height_pts });
-  // }
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setStatus(`Uploading "${file.name}"...`);
+      const { paper_id } = await uploadPdf(file);
+      setPaperId(paper_id);
+      
+      const { pages } = await getPageCount(paper_id);
+      setPages(pages);
+      setPageIndex(0);
+      
+      // Load saved state immediately
+      const success = await loadPaperData(paper_id);
+      
+      if (success) {
+        setStatus(`Loaded "${file.name}" (${pages} pages). Restored saved state.`);
+      } else {
+        setStatus(`Loaded "${file.name}" (${pages} pages).`);
+      }
+      
+      // Reset Editor
+      setSelectedEqUid(null);
+      setSelectedBoxId(null);
+      setLatex("");
+      setNotes("");
+
+    } catch (err: any) {
+      console.error(err);
+      setStatus(`Error uploading/loading PDF: ${err.message}`);
+    }
+  };
+
   const handleImageReady = useCallback((image: HTMLImageElement, meta: any) => {
-    // We only update state with stable values. setState functions are stable,
-    // so this callback can safely be memoized with an empty deps array.
     setImg(image);
     setPagePx({ width: meta.width_px, height: meta.height_px });
     setPdfDims({ widthPts: meta.width_pts, heightPts: meta.height_pts });
   }, []);
 
-  function buildSavedBoxesFromEquations(eqs: EquationRecord[]): SavedBox[] {
-  const sBoxes: SavedBox[] = [];
-  for (const eq of eqs) {
-    eq.boxes.forEach((b, idx) => {
-      sBoxes.push({
-        page: b.page,
-        bbox_pdf: b.bbox_pdf,
-        eq_uid: eq.eq_uid,
-        box_idx: idx,
-        id: `saved-${eq.eq_uid}-${idx}`,
-      });
-    });
-  }
-  return sBoxes;
-}
-
-async function autoLoadProfileForPdf(pdfPath: string) {
-  const basename = pdfPath.split(/[\\/]/).pop()?.toLowerCase(); // normalize case
-  if (!basename) {
-    setStatus("❌ Could not determine PDF basename");
-    return;
-  }
-
-  // UX: show status/spinner during lookup
-  setStatus("🔎 Looking for existing profile...");
-
-  try {
-    const profile = await findProfileByPdf(basename);
-    if (!profile) {
-      setStatus("ℹ️ No existing profile found for this PDF.");
-      // Clear any previous profile state
-      setPaperId(null);
-      setEquations([]);
-      setSavedBoxes([]);
-      return;
-    }
-
-    const pid = profile.paper_id;
-    setPaperId(pid);
-    setStatus(`✅ Loaded profile for paper_id: ${pid}`);
-
-    // load equations and savedBoxes
-    const savedResp = await listEquations(pid);
-    const eqs: EquationRecord[] = savedResp.items || [];
-    setEquations(eqs);
-    setSavedBoxes(buildSavedBoxesFromEquations(eqs));
-  } catch (err: any) {
-    console.error("Error finding/loading profile:", err);
-    setStatus(`❌ Error during profile lookup: ${err?.message ?? String(err)}`);
-    setPaperId(null);
-  }
-}
-  
-// --- New Handler for Full Scan ---
   const handleScanComplete = async () => {
     if (!paperId) return;
-    
-    // Simply reload all data from the backend
-    // The backend has already saved the new equations
-    try {
-      const saved = await listEquations(paperId);
-      const eqs: EquationRecord[] = saved.items || [];
-      setEquations(eqs);
-      setSavedBoxes(buildSavedBoxesFromEquations(eqs));
-      setStatus("✅ Paper scan complete. Data reloaded.");
-    } catch (e) {
-      console.error(e);
-      setStatus("❌ Error reloading data after scan.");
-    }
+    await loadPaperData(paperId);
+    setStatus("✅ Paper scan complete. Data reloaded.");
   };
-// -----------------------------------
 
   async function onValidate() {
     const r = await validateLatex(latex);
     setStatus(r.ok ? "✅ OK" : `❌ ${r.errors?.join("; ") || ""}`);
   }
 
-  
-
-// Save: create new equation OR update an existing one
-async function onSave() {
-  if (!paperId) {
-    setStatus("❌ No PDF loaded.");
-    return;
-  }
-
-  try {
-    // If an existing equation is selected, update it
-    if (selectedEqUid) {
-      // find the equation record in memory
-      const existing = equations.find((e) => e.eq_uid === selectedEqUid);
-
-      if (!existing) {
-        setStatus("❌ Selected equation not found; saving as new.");
-      } else {
-        // Make a new record merging edits:
-        // Use the existing boxes (they should have been updated by handleSavedBoxChange)
-        const updated: EquationRecord = {
-          eq_uid: existing.eq_uid,
-          paper_id: paperId,
-          latex: latex,
-          notes: notes,
-          boxes: existing.boxes.map((b) => ({ page: b.page, bbox_pdf: b.bbox_pdf })),
-        };
-
-        // Call update endpoint (PUT) to persist changes in-place
-        console.log("Updating equation (SAVE) payload:", updated);
-
-        await updateEquation(paperId, existing.eq_uid, updated);
-
-        setStatus("✅ Updated existing equation.");
-        // Reload equations so frontend is canonical with backend
-        const saved = await listEquations(paperId);
-        setEquations(saved.items || []);
-        // rebuild savedBoxes (you probably already do this after saves)
-        const sBoxes: SavedBox[] = [];
-        (saved.items || []).forEach((eq: EquationRecord) => {
-          eq.boxes.forEach((b, idx) => {
-            sBoxes.push({
-              page: b.page,
-              bbox_pdf: b.bbox_pdf,
-              eq_uid: eq.eq_uid,
-              box_idx: idx,
-              id: `saved-${eq.eq_uid}-${idx}`,
-            });
-          });
-        });
-        setSavedBoxes(sBoxes);
-        // keep selection on the updated equation
-        setSelectedEqUid(existing.eq_uid);
-        return;
-      }
-    }
-
-    // Otherwise: create a new equation using currentBoxes
-    if (currentBoxes.length === 0) {
-      setStatus("❌ Add at least one box.");
+  // --- SAVE HANDLER (Unified) ---
+  async function onSave() {
+    if (!paperId) {
+      setStatus("❌ No PDF loaded.");
       return;
     }
-
-    const rec: EquationRecord = {
-      eq_uid: crypto.randomUUID().slice(0, 16),
-      paper_id: paperId,
-      latex,
-      notes,
-      boxes: currentBoxes.map((b) => ({ page: b.page, bbox_pdf: b.bbox_pdf })),
-    };
-
-    await saveEquation(paperId, rec);
-
-    setStatus(`✅ Saved ${currentBoxes.length} box(es).`);
-
-    // reload equations and savedBoxes
-    const saved = await listEquations(paperId);
-    const eqs: EquationRecord[] = saved.items || [];
-    setEquations(eqs);
-
-    const sBoxes: SavedBox[] = [];
-    for (const eq of eqs) {
-      eq.boxes.forEach((b, idx) => {
-        sBoxes.push({
-          page: b.page,
-          bbox_pdf: b.bbox_pdf,
-          eq_uid: eq.eq_uid,
-          box_idx: idx,
-          id: `saved-${eq.eq_uid}-${idx}`,
-        });
-      });
+    try {
+      if (selectedEqUid) {
+        // UPDATE EXISTING
+        const existing = equations.find((e) => e.eq_uid === selectedEqUid);
+        if (existing) {
+          const updated: EquationRecord = {
+            ...existing,
+            paper_id: paperId,
+            latex: latex,
+            notes: notes,
+            // Keep existing boxes (coordinates might have changed via drag)
+            boxes: existing.boxes.map((b) => ({ page: b.page, bbox_pdf: b.bbox_pdf })),
+          };
+          await updateEquation(paperId, existing.eq_uid, updated);
+          setStatus("✅ Updated existing equation.");
+        }
+      } else {
+        // CREATE NEW
+        if (currentBoxes.length === 0) {
+          setStatus("❌ Add at least one box.");
+          return;
+        }
+        const rec: EquationRecord = {
+          eq_uid: crypto.randomUUID().slice(0, 16),
+          paper_id: paperId,
+          latex,
+          notes,
+          boxes: currentBoxes.map((b) => ({ page: b.page, bbox_pdf: b.bbox_pdf })),
+        };
+        await saveEquation(paperId, rec);
+        setStatus(`✅ Saved ${currentBoxes.length} box(es).`);
+      }
+      
+      // CRITICAL: Reload state from backend to confirm save and show gray box
+      await loadPaperData(paperId);
+      
+    } catch (err: any) {
+      console.error(err);
+      setStatus(`❌ Error saving: ${err.message}`);
     }
-    setSavedBoxes(sBoxes);
-    setCurrentBoxes([]); // clear the working boxes after save
-  } catch (err: any) {
-    console.error(err);
-    setStatus(`❌ Error saving equation: ${err?.message ?? String(err)}`);
   }
-}
 
-
-  // When a saved box is selected on the canvas, load the corresponding equation's latex
   function handleSelectSaved(eq_uid: string, boxId: string) {
     setSelectedBoxId(boxId);
     setSelectedEqUid(eq_uid);
@@ -299,175 +176,84 @@ async function onSave() {
     if (eq) {
       setLatex(eq.latex || "");
       setNotes(eq.notes || "");
-    } else {
-      setLatex("");
-      setNotes("");
     }
   }
 
-  // When a saved box is edited (drag/transform), update in-memory savedBoxes (and equations structure)
   function handleSavedBoxChange(boxId: string, newBox: Box) {
-    // update savedBoxes
+    // Optimistic UI update for dragging Saved Boxes
     setSavedBoxes((prev) =>
       prev.map((sb) => (sb.id === boxId ? { ...sb, bbox_pdf: newBox.bbox_pdf } : sb))
     );
-
-    // also update the corresponding equation's boxes in `equations` so LaTeX save can include the change
+    // Sync to 'equations' state so Save picks it up
     setEquations((prev) =>
       prev.map((eq) => {
-        const found = prev.findIndex((x) => x.eq_uid === eq.eq_uid);
-        // map over eqs, but do it by replacing the box if it matches eq_uid & box_idx
         const updated = { ...eq };
-        let changed = false;
         updated.boxes = updated.boxes.map((b, idx) => {
           const id = `saved-${eq.eq_uid}-${idx}`;
-          if (id === boxId) {
-            changed = true;
-            return { ...b, bbox_pdf: newBox.bbox_pdf };
-          }
-          return b;
+          return id === boxId ? { ...b, bbox_pdf: newBox.bbox_pdf } : b;
         });
         return updated;
       })
     );
   }
 
-  // Delete the currently selected saved box (persist change via DELETE or PUT)
   async function handleDeleteSavedBox() {
-    if (!paperId) {
-      setStatus("❌ No PDF loaded.");
-      return;
-    }
-    if (!selectedBoxId) {
-      setStatus("❌ No box selected.");
-      return;
-    }
-  
-
-
-    // Ensure it's a saved box
+    if (!paperId || !selectedBoxId) return;
     const sb = savedBoxes.find((s) => s.id === selectedBoxId);
-    if (!sb) {
-      setStatus("❌ Selected box is not a saved box.");
-      return;
-    }
+    if (!sb) return;
 
     const { eq_uid, box_idx } = sb;
-
-    // Find the equation to update
     const eq = equations.find((e) => e.eq_uid === eq_uid);
-    if (!eq) {
-      setStatus("❌ Could not find matching equation.");
-      return;
-    }
+    if (!eq) return;
 
-    // Build an updated equation record with that box removed
     const newBoxes = eq.boxes.filter((b, idx) => idx !== box_idx);
-
     try {
-      // If no boxes remain after removing this one, delete the whole equation record.
       if (newBoxes.length === 0) {
-        console.log("Deleting entire equation (no boxes remaining):", { paperId, eq_uid });
         await deleteEquation(paperId, eq_uid);
-        setStatus("✅ Deleted equation (last box removed).");
+        setStatus("✅ Deleted equation.");
       } else {
-        // Otherwise, update the existing equation with the remaining boxes.
-        const updated: EquationRecord = {
-          eq_uid: eq.eq_uid,
-          paper_id: paperId,
-          latex: eq.latex ?? "",
-          notes: eq.notes ?? "",
-          boxes: newBoxes,
-        };
-        console.log("Updating equation (DELETE BOX) payload:", updated);
+        const updated = { ...eq, boxes: newBoxes };
         await updateEquation(paperId, eq_uid, updated);
-        setStatus("✅ Deleted saved box and updated backend.");
+        setStatus("✅ Deleted box.");
       }
-
-      // Reload canonical equations from backend so indices & box_idx are consistent
-      const saved = await listEquations(paperId);
-      const eqs: EquationRecord[] = saved.items || [];
-      setEquations(eqs);
-
-      // Rebuild savedBoxes
-      const sBoxes: SavedBox[] = [];
-      for (const e of eqs) {
-        e.boxes.forEach((b, idx) => {
-          sBoxes.push({
-            page: b.page,
-            bbox_pdf: b.bbox_pdf,
-            eq_uid: e.eq_uid,
-            box_idx: idx,
-            id: `saved-${e.eq_uid}-${idx}`,
-          });
-        });
-      }
-      setSavedBoxes(sBoxes);
-
-      // Clear selection
+      
+      // CRITICAL: Reload state to reflect deletion
+      await loadPaperData(paperId);
+      
       setSelectedBoxId(null);
       setSelectedEqUid(null);
+      setLatex("");
+      setNotes("");
     } catch (err: any) {
-      console.error("Error during delete/update (DELETE BOX):", err);
-      setStatus(`❌ Error deleting saved box: ${err?.message ?? String(err)}`);
+      setStatus(`❌ Delete error: ${err.message}`);
     }
   }
 
   async function handleRescanSelected() {
-  if (!paperId || !selectedBoxId) return;
-
-  // Find the selected box object
-  const sb = savedBoxes.find((s) => s.id === selectedBoxId);
-  if (!sb) {
-    setStatus("❌ Select a saved box to rescan.");
-    return;
+    if (!paperId || !selectedBoxId) return;
+    // Check saved boxes first, then current boxes
+    let box: Box | undefined = savedBoxes.find((s) => s.id === selectedBoxId);
+    if (!box) box = currentBoxes.find((c) => c.id === selectedBoxId);
+    
+    if (!box) {
+      setStatus("❌ Select a box to rescan.");
+      return;
+    }
+    setStatus("⏳ Scanning selection...");
+    try {
+      const result = await rescanBox(paperId, box.page, box.bbox_pdf);
+      setLatex(result.latex);
+      setStatus("✅ Rescan complete.");
+    } catch (err: any) {
+      setStatus(`❌ Rescan error: ${err.message}`);
+    }
   }
-
-  setStatus("⏳ Scanning selection...");
-  try {
-    const result = await rescanBox(paperId, sb.page, sb.bbox_pdf);
-
-    // Update the Latex Editor State
-    setLatex(result.latex);
-    setStatus("✅ Rescan complete.");
-
-    // Optional: Auto-save the new LaTeX to the backend immediately?
-    // For now, let's just update the text area so the user can verify before clicking "Approve".
-  } catch (err: any) {
-    console.error(err);
-    setStatus(`❌ Rescan error: ${err.message}`);
-  }
-}
-
-  // Create SavedBox[] convenience for Boxes component (already maintained above but keep in sync)
-  // (No extra code needed here because we update savedBoxes on load/save/edit.)
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", padding: 12, gap: 12 }}>
-{/* LEFT: PDF viewport */}
-      <div 
-        style={{ 
-          flex: "0 0 70%", 
-          maxWidth: "70%", 
-          minWidth: 600, 
-          borderRight: "1px solid #ddd", 
-          display: "flex", 
-          // REMOVED: justifyContent: "center", alignItems: "center"
-          // We remove these to prevent clipping the top/left when zoomed in.
-          background: "#f5f5f5", 
-          overflow: "auto" 
-        }}
-      >
-        <div 
-          style={{ 
-            // ADDED: margin: "auto"
-            // This magically centers the element in a flex container if there's space,
-            // but allows normal top-left alignment if it overflows (enabling scrolling).
-            margin: "auto", 
-            position: "relative" 
-            // REMOVED: display: "inline-block" (not strictly necessary with flex child, but harmless if kept)
-          }}
-        >
+      {/* LEFT: PDF viewport */}
+      <div style={{ flex: "0 0 70%", maxWidth: "70%", minWidth: 600, borderRight: "1px solid #ddd", display: "flex", background: "#f5f5f5", overflow: "auto" }}>
+        <div style={{ margin: "auto", position: "relative" }}>
           {hasPdf && (
             <PdfImage paperId={paperId!} pageIndex={pageIndex} zoom={zoom} onImageReady={handleImageReady} />
           )}
@@ -480,6 +266,7 @@ async function onSave() {
             currentBoxes={currentBoxes}
             setCurrentBoxes={setCurrentBoxes}
             onSelectSaved={handleSelectSaved}
+            onSelectBox={(id) => setSelectedBoxId(id)}
             onSavedBoxChange={handleSavedBoxChange}
             onDeleteSaved={(boxId: string) => {
               setSelectedBoxId(boxId);
@@ -496,7 +283,7 @@ async function onSave() {
             <strong>Load PDF: </strong>
             <input type="file" accept="application/pdf" onChange={handleFileChange} />
           </label>
-          {paperId && <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>Loaded paper id: <code>{paperId}</code> ({pages} pages)</div>}
+          {paperId && <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>Loaded: <code>{paperId}</code></div>}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -508,47 +295,28 @@ async function onSave() {
           <button disabled={!hasPdf} onClick={() => setZoom((z) => z + 0.25)}>+</button>
         </div>
 
-        {/* NEW: Auto-Detect Button */}
         {hasPdf && (
           <div style={{ marginBottom: 8, textAlign: "center" }}>
-            <AutoDetectButton 
-              paperId={paperId} 
-              onScanComplete={handleScanComplete} 
-            />
+            <AutoDetectButton paperId={paperId} onScanComplete={handleScanComplete} />
           </div>
         )}
 
         <div style={{ border: "1px solid #eee", padding: 8 }}>
           <h3 style={{ marginTop: 0 }}>Equation Editor</h3>
-          <label>LaTeX</label>
           <textarea rows={5} value={latex} onChange={(e) => setLatex(e.target.value)} style={{ width: "100%" }} />
-          <label>Notes</label>
-          <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: "100%" }} />
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: "100%" }} placeholder="Notes..." />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
             <button disabled={!hasPdf} onClick={onValidate}>Check</button>
-            <button 
-              disabled={!hasPdf || !selectedBoxId} 
-              onClick={handleRescanSelected}
-              style={{ backgroundColor: "#eef", border: "1px solid #ccd" }}
-              title="Run recognition on the currently selected box"
-            >
-              ↻ Rescan Box
-            </button>
+            <button disabled={!hasPdf || !selectedBoxId} onClick={handleRescanSelected}>↻ Rescan</button>
             <button disabled={!hasPdf} onClick={onSave}>Approve & Save</button>
-            <button disabled={!hasPdf} onClick={() => setCurrentBoxes([])}>Clear Current Boxes</button>
-            <button
-            disabled={!hasPdf || !selectedBoxId || !savedBoxes.some(sb => sb.id === selectedBoxId)}
-            onClick={handleDeleteSavedBox}
-            >
-              Delete Saved Box
-            </button>  
+            <button disabled={!hasPdf} onClick={() => setCurrentBoxes([])}>Clear Boxes</button>
+            <button disabled={!hasPdf || !selectedBoxId || !savedBoxes.some(sb => sb.id === selectedBoxId)} onClick={handleDeleteSavedBox}>Delete</button>  
           </div>
         </div>
 
         <div style={{ border: "1px solid #eee", padding: 8 }}>
-          <h3 style={{ marginTop: 0 }}>Boxes</h3>
-          <div>Saved (gray): {savedBoxes.filter((b) => b.page === pageIndex).length} on this page</div>
-          <div>Current (red): {currentBoxes.filter((b) => b.page === pageIndex).length} on this page</div>
+          <div>Saved: {savedBoxes.filter((b) => b.page === pageIndex).length}</div>
+          <div>Current: {currentBoxes.filter((b) => b.page === pageIndex).length}</div>
           <div style={{ marginTop: 8, color: "#666" }}>{status}</div>
         </div>
 
@@ -558,19 +326,6 @@ async function onSave() {
             <LaTeXPreview latex={latex} />
           </div>
         </div>
-
-        {/* <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button disabled={!hasPdf} onClick={onValidate}>Check</button>
-          <button disabled={!hasPdf} onClick={onSave}>Approve & Save</button>
-          <button disabled={!hasPdf} onClick={() => setCurrentBoxes([])}>Clear Current Boxes</button>
-          <button
-            disabled={!hasPdf || !selectedBoxId || !savedBoxes.some(sb => sb.id === selectedBoxId)}
-            onClick={handleDeleteSavedBox}
-          >
-            Delete Saved Box
-          </button>
-        </div> */}
-
       </div>
     </div>
   );
