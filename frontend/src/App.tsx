@@ -413,26 +413,29 @@ async function onSave() {
     }
   }
 
-  async function handleRescanSelected() {
+async function handleRescanSelected() {
   if (!paperId || !selectedBoxId) return;
 
-  // Find the selected box object
-  const sb = savedBoxes.find((s) => s.id === selectedBoxId);
-  if (!sb) {
-    setStatus("❌ Select a saved box to rescan.");
+  // Try finding the selected box in Saved Boxes
+  let box: Box | undefined = savedBoxes.find((s) => s.id === selectedBoxId);
+
+  // If not found, try Current Boxes (newly drawn ones)
+  if (!box) {
+    box = currentBoxes.find((c) => c.id === selectedBoxId);
+  }
+
+  if (!box) {
+    setStatus("❌ Select a box to rescan.");
     return;
   }
 
   setStatus("⏳ Scanning selection...");
   try {
-    const result = await rescanBox(paperId, sb.page, sb.bbox_pdf);
+    const result = await rescanBox(paperId, box.page, box.bbox_pdf);
 
     // Update the Latex Editor State
     setLatex(result.latex);
     setStatus("✅ Rescan complete.");
-
-    // Optional: Auto-save the new LaTeX to the backend immediately?
-    // For now, let's just update the text area so the user can verify before clicking "Approve".
   } catch (err: any) {
     console.error(err);
     setStatus(`❌ Rescan error: ${err.message}`);
@@ -480,6 +483,7 @@ async function onSave() {
             currentBoxes={currentBoxes}
             setCurrentBoxes={setCurrentBoxes}
             onSelectSaved={handleSelectSaved}
+            onSelectBox={(id) => setSelectedBoxId(id)} //  Sync selection
             onSavedBoxChange={handleSavedBoxChange}
             onDeleteSaved={(boxId: string) => {
               setSelectedBoxId(boxId);

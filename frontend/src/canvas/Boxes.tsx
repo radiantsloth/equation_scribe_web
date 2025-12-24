@@ -12,6 +12,10 @@ type Props = {
   currentBoxes: Box[];
   setCurrentBoxes: (b: Box[]) => void;
 
+  
+  // Generic handler to tell App.tsx "This ID is now selected"
+  onSelectBox?: (boxId: string | null) => void;
+
   onSelectSaved?: (eq_uid: string, boxId: string) => void;
   
   onDeleteSaved?: (boxId: string) => void;
@@ -28,6 +32,7 @@ export default function Boxes({
   currentBoxes,
   setCurrentBoxes,
   onSelectSaved,
+  onSelectBox,
   onDeleteSaved,
   onSavedBoxChange,
 }: Props) {
@@ -85,6 +90,7 @@ export default function Boxes({
     if (!pos) return;
     setDragStart(pos);
     setSelectedId(null);
+    if (onSelectBox) onSelectBox(null); // Notify parent: Deselect
   }
   function onMouseMove(e:any){
     if (!dragStart) return;
@@ -108,6 +114,8 @@ export default function Boxes({
       const nb:Box = { page: pageIndex, bbox_pdf: bbox, id: `cur-${Date.now()}` };
       setCurrentBoxes([...currentBoxes, nb]);
       setSelectedId(nb.id!);
+      // Auto-select the NEW box locally AND in parent
+      if (onSelectBox) onSelectBox(nb.id!);
     }
     setDragStart(null);
     setDragRect(null);
