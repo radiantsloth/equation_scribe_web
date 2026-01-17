@@ -48,7 +48,7 @@ export default function App() {
       // 2. Rebuild Saved Boxes for Canvas
       const sBoxes: SavedBox[] = [];
       for (const eq of eqs) {
-        eq.boxes.forEach((b, idx) => {
+        (eq.boxes || []).forEach((b, idx) => {
           sBoxes.push({
             page: b.page,
             bbox_pdf: b.bbox_pdf,
@@ -83,7 +83,6 @@ export default function App() {
       setPages(pages);
       setPageIndex(0);
       
-      // Load saved state immediately
       const success = await loadPaperData(paper_id);
       
       if (success) {
@@ -92,7 +91,6 @@ export default function App() {
         setStatus(`Loaded "${file.name}" (${pages} pages).`);
       }
       
-      // Reset Editor
       setSelectedEqUid(null);
       setSelectedBoxId(null);
       setLatex("");
@@ -137,7 +135,6 @@ export default function App() {
             paper_id: paperId,
             latex: latex,
             notes: notes,
-            // Keep existing boxes (coordinates might have changed via drag)
             boxes: existing.boxes.map((b) => ({ page: b.page, bbox_pdf: b.bbox_pdf })),
           };
           await updateEquation(paperId, existing.eq_uid, updated);
@@ -160,7 +157,6 @@ export default function App() {
         setStatus(`✅ Saved ${currentBoxes.length} box(es).`);
       }
       
-      // CRITICAL: Reload state from backend to confirm save and show gray box
       await loadPaperData(paperId);
       
     } catch (err: any) {
@@ -180,11 +176,9 @@ export default function App() {
   }
 
   function handleSavedBoxChange(boxId: string, newBox: Box) {
-    // Optimistic UI update for dragging Saved Boxes
     setSavedBoxes((prev) =>
       prev.map((sb) => (sb.id === boxId ? { ...sb, bbox_pdf: newBox.bbox_pdf } : sb))
     );
-    // Sync to 'equations' state so Save picks it up
     setEquations((prev) =>
       prev.map((eq) => {
         const updated = { ...eq };
@@ -217,7 +211,6 @@ export default function App() {
         setStatus("✅ Deleted box.");
       }
       
-      // CRITICAL: Reload state to reflect deletion
       await loadPaperData(paperId);
       
       setSelectedBoxId(null);
@@ -231,7 +224,6 @@ export default function App() {
 
   async function handleRescanSelected() {
     if (!paperId || !selectedBoxId) return;
-    // Check saved boxes first, then current boxes
     let box: Box | undefined = savedBoxes.find((s) => s.id === selectedBoxId);
     if (!box) box = currentBoxes.find((c) => c.id === selectedBoxId);
     
@@ -250,7 +242,15 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden", padding: 12, gap: 12 }}>
+    <div style={{ 
+      display: "flex", 
+      height: "100vh", 
+      width: "100vw", // Ensure full width
+      overflow: "hidden", 
+      padding: 12, 
+      gap: 12, 
+      boxSizing: "border-box" // <--- FIX: This pulls the bottom edge up so it fits on screen
+    }}>
       {/* LEFT: PDF viewport */}
       <div style={{ flex: "0 0 70%", maxWidth: "70%", minWidth: 600, borderRight: "1px solid #ddd", display: "flex", background: "#f5f5f5", overflow: "auto" }}>
         <div style={{ margin: "auto", position: "relative" }}>
